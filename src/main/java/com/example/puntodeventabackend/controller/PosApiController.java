@@ -52,7 +52,7 @@ public class PosApiController {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Usuario o password invalido");
         }
 
-        Map<String, Object> user = rows.getFirst();
+        Map<String, Object> user = rows.get(0);
         String estado = String.valueOf(user.get("estado"));
         if (!"activo".equalsIgnoreCase(estado)) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Usuario inactivo");
@@ -174,8 +174,8 @@ public class PosApiController {
         if (current.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Categoria no encontrada");
         }
-        String name = payload.containsKey("name") ? String.valueOf(payload.get("name")) : String.valueOf(current.getFirst().get("nombre"));
-        String slug = payload.containsKey("slug") ? String.valueOf(payload.get("slug")) : String.valueOf(current.getFirst().get("slug"));
+        String name = payload.containsKey("name") ? String.valueOf(payload.get("name")) : String.valueOf(current.get(0).get("nombre"));
+        String slug = payload.containsKey("slug") ? String.valueOf(payload.get("slug")) : String.valueOf(current.get(0).get("slug"));
         jdbcTemplate.update("UPDATE categorias_producto SET nombre = ?, slug = ? WHERE id = ?", name, slug, id);
         return Map.of("id", id, "name", name, "slug", slug);
     }
@@ -297,7 +297,7 @@ public class PosApiController {
             if (productRows.isEmpty()) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Producto no encontrado: " + productId);
             }
-            Map<String, Object> product = productRows.getFirst();
+            Map<String, Object> product = productRows.get(0);
             int stock = ((Number) product.get("stock")).intValue();
             if (stock < qty) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Stock insuficiente para producto " + productId);
