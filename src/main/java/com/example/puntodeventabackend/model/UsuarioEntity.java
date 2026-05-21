@@ -15,6 +15,9 @@ public class UsuarioEntity {
     @Column(name = "username", nullable = false, unique = true)
     private String username;
 
+    @Column(name = "password", length = 255)
+    private String password;
+
     @Column(name = "role", nullable = false)
     private String role;
 
@@ -30,6 +33,10 @@ public class UsuarioEntity {
 
     public String getUsername() {
         return username;
+    }
+
+    public String getPassword() {
+        return password;
     }
 
     public String getRole() {
