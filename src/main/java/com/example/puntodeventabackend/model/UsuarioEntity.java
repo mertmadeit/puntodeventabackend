@@ -27,6 +27,9 @@ public class UsuarioEntity {
     @Column(name = "estado", nullable = false)
     private String estado;
 
+    @Column(name = "image_url", columnDefinition = "LONGTEXT")
+    private String imageUrl;
+
     public Long getId() {
         return id;
     }
@@ -49,5 +52,9 @@ public class UsuarioEntity {
 
     public String getEstado() {
         return estado;
+    }
+
+    public String getImageUrl() {
+        return imageUrl;
     }
 }
