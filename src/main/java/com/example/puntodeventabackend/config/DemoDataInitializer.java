@@ -2,11 +2,13 @@ package com.example.puntodeventabackend.config;
 
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Component;
 
 @Component
+@ConditionalOnProperty(name = "app.demo-data.enabled", havingValue = "true", matchIfMissing = true)
 public class DemoDataInitializer implements ApplicationRunner {
 
     private final JdbcTemplate jdbcTemplate;
@@ -19,11 +21,29 @@ public class DemoDataInitializer implements ApplicationRunner {
     @Override
     public void run(ApplicationArguments args) {
         ensurePasswordColumn();
+        ensureUserImageColumn();
         upsertUser(1L, "admin", "admin", "admin", "Mert Made It");
         upsertUser(2L, "juan", "admin", "vendedor", "Juan Perez");
         upsertUser(3L, "ana", "admin", "vendedor", "Ana Diaz");
         upsertUser(4L, "carlos", "admin", "supervisor", "Carlos Perez");
         upsertUser(5L, "laura", "admin", "supervisor", "Laura Gomez");
+    }
+
+    private void ensureUserImageColumn() {
+        Integer count = jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM information_schema.columns
+                WHERE table_schema = DATABASE()
+                  AND table_name = 'usuarios'
+                  AND column_name = 'image_url'
+                """,
+                Integer.class
+        );
+
+        if (count != null && count == 0) {
+            jdbcTemplate.execute("ALTER TABLE usuarios ADD COLUMN image_url LONGTEXT NULL");
+        }
     }
 
     private void ensurePasswordColumn() {
