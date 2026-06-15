@@ -25,7 +25,7 @@ public class SecurityConfig {
     public SecurityConfig(
             BearerAuthFilter bearerAuthFilter,
             @org.springframework.beans.factory.annotation.Value("${app.cors.allowed-origins:http://localhost:3000,http://127.0.0.1:3000}") String allowedOrigins,
-            @org.springframework.beans.factory.annotation.Value("${app.cors.allowed-origin-patterns:}") String allowedOriginPatterns
+            @org.springframework.beans.factory.annotation.Value("${app.cors.allowed-origin-patterns:https://*.up.railway.app}") String allowedOriginPatterns
     ) {
         this.bearerAuthFilter = bearerAuthFilter;
         this.allowedOrigins = allowedOrigins;
