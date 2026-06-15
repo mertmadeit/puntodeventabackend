@@ -20,13 +20,16 @@ public class SecurityConfig {
 
     private final BearerAuthFilter bearerAuthFilter;
     private final String allowedOrigins;
+    private final String allowedOriginPatterns;
 
     public SecurityConfig(
             BearerAuthFilter bearerAuthFilter,
-            @org.springframework.beans.factory.annotation.Value("${app.cors.allowed-origins:http://localhost:3000,http://127.0.0.1:3000}") String allowedOrigins
+            @org.springframework.beans.factory.annotation.Value("${app.cors.allowed-origins:http://localhost:3000,http://127.0.0.1:3000}") String allowedOrigins,
+            @org.springframework.beans.factory.annotation.Value("${app.cors.allowed-origin-patterns:}") String allowedOriginPatterns
     ) {
         this.bearerAuthFilter = bearerAuthFilter;
         this.allowedOrigins = allowedOrigins;
+        this.allowedOriginPatterns = allowedOriginPatterns;
     }
 
     @Bean
@@ -50,10 +53,14 @@ public class SecurityConfig {
     @Bean
     CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOrigins(Arrays.stream(allowedOrigins.split(","))
-                .map(String::trim)
-                .filter(origin -> !origin.isBlank())
-                .toList());
+        List<String> origins = parseCsv(allowedOrigins);
+        List<String> originPatterns = parseCsv(allowedOriginPatterns);
+        if (!origins.isEmpty()) {
+            config.setAllowedOrigins(origins);
+        }
+        if (!originPatterns.isEmpty()) {
+            config.setAllowedOriginPatterns(originPatterns);
+        }
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
         config.setExposedHeaders(List.of("Authorization"));
@@ -62,5 +69,12 @@ public class SecurityConfig {
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", config);
         return source;
+    }
+
+    private List<String> parseCsv(String value) {
+        return Arrays.stream(value.split(","))
+                .map(String::trim)
+                .filter(item -> !item.isBlank())
+                .toList();
     }
 }
