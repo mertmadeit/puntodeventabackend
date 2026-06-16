@@ -12,8 +12,10 @@ public class AuthTokenService {
 
     private static final long TTL_SECONDS = 60 * 60 * 8; // 8h
 
+    // Sesiones efimeras guardadas en memoria; se pierden al reiniciar el backend.
     private final Map<String, SessionData> sessions = new ConcurrentHashMap<>();
 
+    // Emite un token nuevo y guarda la sesion con fecha de expiracion.
     public String issueToken(Long userId, String username, String role) {
         String token = UUID.randomUUID().toString().replace("-", "") + "." + UUID.randomUUID();
         SessionData data = new SessionData(userId, username, role, Instant.now().plusSeconds(TTL_SECONDS));
@@ -21,6 +23,7 @@ public class AuthTokenService {
         return token;
     }
 
+    // Revisa si el token sigue vigente y devuelve la sesion asociada.
     public SessionData validate(String token) {
         if (token == null || token.isBlank()) return null;
         SessionData data = sessions.get(token);
@@ -32,6 +35,7 @@ public class AuthTokenService {
         return data;
     }
 
+    // Elimina el token cuando el usuario cierra sesion.
     public void revoke(String token) {
         if (token == null || token.isBlank()) return;
         sessions.remove(token);

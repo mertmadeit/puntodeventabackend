@@ -17,6 +17,11 @@ import java.util.Map;
 import java.util.Objects;
 
 @Service
+/**
+ * Consolida la operacion de tesoreria: resumen, movimientos, turnos y cortes.
+ *
+ * Aqui conviven consultas resumidas y operaciones que dependen de un turno abierto.
+ */
 public class TreasuryService {
 
     private final JdbcTemplate jdbcTemplate;
@@ -27,6 +32,7 @@ public class TreasuryService {
         this.jdbcSupportRepository = jdbcSupportRepository;
     }
 
+    // Devuelve el estado general de caja y ventas por metodo de pago.
     public Map<String, Object> getResumen() {
         BigDecimal fondoCaja = ApiSupport.nvlMoney(jdbcTemplate.queryForObject(
                 "SELECT COALESCE(SUM(monto_inicial),0) FROM caja_turnos WHERE estado='abierto'",
@@ -52,6 +58,7 @@ public class TreasuryService {
         );
     }
 
+    // Trae los movimientos de caja en orden descendente.
     public List<Map<String, Object>> getMovimientos() {
         return jdbcTemplate.query(
                 """
@@ -71,6 +78,7 @@ public class TreasuryService {
         );
     }
 
+    // Registra una entrada o retiro de caja asociado al turno abierto.
     @Transactional
     public Map<String, Object> createMovimiento(Map<String, Object> payload) {
         Long turnoId = getOpenTurnoId();
@@ -113,6 +121,7 @@ public class TreasuryService {
         );
     }
 
+    // Lista cortes ya calculados con datos del turno original.
     public List<Map<String, Object>> getCortes() {
         return jdbcTemplate.query(
                 """
@@ -137,6 +146,7 @@ public class TreasuryService {
         );
     }
 
+    // Genera el corte usando el SP de la base y registra auditoria.
     @Transactional
     public Map<String, Object> createCorte(Map<String, Object> payload) {
         Long turnoId = ApiSupport.requireLong(payload.get("turnoId"), "turnoId requerido", "turnoId invalido");
@@ -195,6 +205,7 @@ public class TreasuryService {
         );
     }
 
+    // Lista turnos abiertos con ventas y movimientos acumulados.
     public List<Map<String, Object>> getTurnos() {
         return jdbcTemplate.query(
                 """
@@ -226,6 +237,7 @@ public class TreasuryService {
         );
     }
 
+    // Busca el unico turno abierto disponible para la caja.
     private Long getOpenTurnoId() {
         List<Long> ids = jdbcTemplate.queryForList(
                 "SELECT id FROM caja_turnos WHERE estado='abierto' ORDER BY hora_apertura LIMIT 1",
@@ -237,6 +249,7 @@ public class TreasuryService {
         return ids.get(0);
     }
 
+    // Normaliza el tipo de movimiento a los valores aceptados por la base.
     private static String normalizeMovimientoTipo(Object value) {
         String tipo = String.valueOf(value).trim().toLowerCase();
         return switch (tipo) {

@@ -10,6 +10,9 @@ import java.sql.SQLException;
 import java.sql.Statement;
 
 @Repository
+/**
+ * Helper JDBC para inserts que necesitan recuperar el ID autogenerado.
+ */
 public class JdbcSupportRepository {
 
     private final JdbcTemplate jdbcTemplate;
@@ -23,6 +26,7 @@ public class JdbcSupportRepository {
         void bind(PreparedStatement statement) throws SQLException;
     }
 
+    // Ejecuta el insert y expone la llave primaria generada por la DB.
     public Long insertAndReturnId(String sql, StatementBinder binder) {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {

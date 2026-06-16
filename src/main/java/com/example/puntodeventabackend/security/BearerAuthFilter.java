@@ -25,6 +25,7 @@ public class BearerAuthFilter extends OncePerRequestFilter {
     }
 
     @Override
+    // Deja pasar rutas publicas y preflight; todo lo demas bajo /api necesita token.
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = request.getRequestURI();
         // Preflight y endpoints publicos no deben exigir token.
@@ -37,6 +38,7 @@ public class BearerAuthFilter extends OncePerRequestFilter {
     }
 
     @Override
+    // Valida el bearer token y deja el usuario cargado en el SecurityContext.
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
         String authHeader = request.getHeader(HttpHeaders.AUTHORIZATION);

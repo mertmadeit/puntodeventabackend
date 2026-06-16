@@ -9,6 +9,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/mermas")
+// Registro y consulta de mermas de inventario.
 public class MermasController {
 
     private final InventoryLossService inventoryLossService;

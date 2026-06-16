@@ -16,11 +16,18 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Utilidades compartidas para los servicios del POS.
+ *
+ * Aqui viven validaciones, conversiones de tipos y el helper que inserta
+ * registros de auditoria sin repetir el mismo codigo en cada servicio.
+ */
 final class ApiSupport {
 
     private ApiSupport() {
     }
 
+    // Ejecuta un INSERT y regresa la llave generada por la base de datos.
     static Long insertAndReturnId(JdbcSupportRepository repository, String sql, JdbcSupportRepository.StatementBinder binder) {
         try {
             return repository.insertAndReturnId(sql, binder);
@@ -29,6 +36,7 @@ final class ApiSupport {
         }
     }
 
+    // Normaliza fechas de la base a ISO-8601 en UTC para la API.
     static String toUtcIsoString(Object value) {
         if (value instanceof Timestamp timestamp) {
             return timestamp.toInstant().toString();
@@ -45,6 +53,7 @@ final class ApiSupport {
         return String.valueOf(value);
     }
 
+    // Convierte payloads tipo lista-JSON a List<Map<String, Object>>.
     static List<Map<String, Object>> castListOfMap(Object value) {
         if (!(value instanceof List<?> rawList)) {
             return List.of();
@@ -60,6 +69,7 @@ final class ApiSupport {
         return out;
     }
 
+    // Convierte valores numericos a BigDecimal con 2 decimales.
     static BigDecimal toBigDecimal(Object value) {
         if (value == null) return null;
         if (value instanceof BigDecimal bd) return bd.setScale(2, RoundingMode.HALF_UP);
@@ -73,6 +83,7 @@ final class ApiSupport {
         }
     }
 
+    // Valida montos mayores a cero.
     static BigDecimal requirePositiveAmount(Object value, String message) {
         BigDecimal amount = toBigDecimal(value);
         if (amount == null || amount.signum() <= 0) {
@@ -81,6 +92,7 @@ final class ApiSupport {
         return amount;
     }
 
+    // Valida montos cero o mayores, por ejemplo para cortes.
     static BigDecimal requireNonNegativeAmount(Object value, String message) {
         BigDecimal amount = toBigDecimal(value);
         if (amount == null || amount.signum() < 0) {
@@ -89,10 +101,12 @@ final class ApiSupport {
         return amount;
     }
 
+    // Evita null en operaciones monetarias.
     static BigDecimal nvlMoney(BigDecimal value) {
         return value == null ? BigDecimal.ZERO : value.setScale(2, RoundingMode.HALF_UP);
     }
 
+    // Lee un Long desde texto o numero, con mensaje claro si falla.
     static Long requireLong(Object value, String blankMessage, String invalidMessage) {
         String raw = String.valueOf(value == null ? "" : value).trim();
         if (raw.isBlank()) {
@@ -105,6 +119,7 @@ final class ApiSupport {
         }
     }
 
+    // Valida enteros positivos para cantidades.
     static Integer requirePositiveInteger(Object value, String message) {
         try {
             Integer number = Integer.valueOf(String.valueOf(value));
@@ -117,16 +132,19 @@ final class ApiSupport {
         }
     }
 
+    // Normaliza strings opcionales para evitar nulls y espacios sobrantes.
     static String optionalString(Object value) {
         return value == null ? "" : String.valueOf(value).trim();
     }
 
+    // Acepta booleanos, numeros o texto para campos flexibles del frontend.
     static boolean toBoolean(Object value) {
         if (value instanceof Boolean bool) return bool;
         if (value instanceof Number number) return number.intValue() != 0;
         return Boolean.parseBoolean(String.valueOf(value));
     }
 
+    // Registra auditoria usando el usuario que viene en el contexto de Spring Security.
     static void recordAudit(JdbcTemplate jdbcTemplate, String evento, String detalle) {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         String username = authentication == null ? "" : String.valueOf(authentication.getName()).trim();
@@ -148,6 +166,7 @@ final class ApiSupport {
         recordAudit(jdbcTemplate, userId, userName, evento, detalle);
     }
 
+    // Inserta el registro final en auditoria_registros.
     static void recordAudit(JdbcTemplate jdbcTemplate, Long userId, String userName, String evento, String detalle) {
         jdbcTemplate.update(
                 "INSERT INTO auditoria_registros(fecha_hora, usuario_id, usuario_nombre, evento, detalle) VALUES(?,?,?,?,?)",

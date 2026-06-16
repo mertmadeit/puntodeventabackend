@@ -13,6 +13,12 @@ import java.util.List;
 import java.util.Map;
 
 @Service
+/**
+ * Registra mermas de inventario y consulta su historial.
+ *
+ * El trigger de base descuenta stock; este servicio solo coordina la insercion
+ * y deja huella en auditoria para trazabilidad.
+ */
 public class InventoryLossService {
 
     private final JdbcTemplate jdbcTemplate;
@@ -21,6 +27,7 @@ public class InventoryLossService {
         this.jdbcTemplate = jdbcTemplate;
     }
 
+    // Lista mermas con su producto y el usuario que las registró.
     public List<Map<String, Object>> getMermas() {
         return jdbcTemplate.query(
                 """
@@ -41,6 +48,7 @@ public class InventoryLossService {
         );
     }
 
+    // Inserta una o varias mermas en una sola operacion transaccional.
     @Transactional
     public Map<String, Object> createMerma(Map<String, Object> payload) {
         List<Map<String, Object>> items = ApiSupport.castListOfMap(payload.get("items"));
@@ -74,6 +82,7 @@ public class InventoryLossService {
         return Map.of("message", "Mermas registradas con exito", "count", inserted);
     }
 
+    // Usa el primer usuario disponible como respaldo cuando el request no trae sesion directa.
     private Long getDefaultUserId() {
         List<Long> ids = jdbcTemplate.queryForList("SELECT id FROM usuarios ORDER BY id LIMIT 1", Long.class);
         if (ids.isEmpty()) {
@@ -82,6 +91,7 @@ public class InventoryLossService {
         return ids.get(0);
     }
 
+    // Asegura que la merma apunte a un producto real.
     private void ensureProductExists(Long productId) {
         Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM productos WHERE id = ?", Integer.class, productId);
         if (count == null || count == 0) {
@@ -89,6 +99,7 @@ public class InventoryLossService {
         }
     }
 
+    // Obtiene el nombre del producto para registrar una auditoria legible.
     private String getProductName(Long productId) {
         List<String> names = jdbcTemplate.queryForList("SELECT nombre FROM productos WHERE id = ?", String.class, productId);
         if (names.isEmpty()) {

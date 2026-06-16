@@ -9,6 +9,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/tesoreria")
+// Resumen de caja, movimientos, cortes y turnos abiertos.
 public class TreasuryController {
 
     private final TreasuryService treasuryService;

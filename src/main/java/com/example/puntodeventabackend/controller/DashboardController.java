@@ -10,6 +10,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/dashboard")
+// Datos resumidos y series para las graficas del panel.
 public class DashboardController {
 
     private final PosApiService posApiService;

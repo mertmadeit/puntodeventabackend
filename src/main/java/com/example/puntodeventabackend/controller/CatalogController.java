@@ -9,6 +9,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api")
+// Expone categorias, productos e inventario para el catalogo principal.
 public class CatalogController {
 
     private final PosApiService posApiService;
@@ -61,7 +62,7 @@ public class CatalogController {
         posApiService.deleteProduct(id);
     }
 
-    // Also alias /inventory to product creation for consistency if needed, but products is standard
+    // Alias /inventory para crear producto desde la pantalla de inventario.
     @PostMapping("/inventory")
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, Object> createInventoryProduct(@RequestBody Map<String, Object> payload) {

@@ -9,6 +9,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/sales")
+// Controla la venta, el resumen del dia y la cancelacion de tickets.
 public class SalesController {
 
     private final PosApiService posApiService;

@@ -73,6 +73,7 @@ public class SecurityConfig {
         return source;
     }
 
+    // Convierte listas separadas por coma en colecciones que usa CORS.
     private List<String> parseCsv(String value) {
         return Arrays.stream(value.split(","))
                 .map(String::trim)

@@ -9,6 +9,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api")
+// Punto simple para verificar que el backend sigue vivo.
 public class HealthController {
 
     @GetMapping("/health")

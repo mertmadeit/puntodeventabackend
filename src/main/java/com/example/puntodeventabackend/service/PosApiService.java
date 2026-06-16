@@ -25,6 +25,12 @@ import java.util.HashMap;
 import java.util.Objects;
 
 @Service
+/**
+ * Fachada principal de la API del POS.
+ *
+ * Deja el login, las ventas, el dashboard, los reportes y la auditoria en un
+ * solo punto de entrada para que los controllers permanezcan delgados.
+ */
 public class PosApiService {
 
     private static final DateTimeFormatter DAY_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
@@ -32,91 +38,26 @@ public class PosApiService {
     private final JdbcTemplate jdbcTemplate;
     private final JdbcSupportRepository jdbcSupportRepository;
     private final AuthTokenService authTokenService;
+    private final PosCatalogService posCatalogService;
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
     public PosApiService(
             JdbcTemplate jdbcTemplate,
             JdbcSupportRepository jdbcSupportRepository,
-            AuthTokenService authTokenService
+            AuthTokenService authTokenService,
+            PosCatalogService posCatalogService
     ) {
         this.jdbcTemplate = jdbcTemplate;
         this.jdbcSupportRepository = jdbcSupportRepository;
         this.authTokenService = authTokenService;
+        this.posCatalogService = posCatalogService;
     }
 
-    private Long insertAndReturnId(String sql, JdbcSupportRepository.StatementBinder binder) {
-        try {
-            return jdbcSupportRepository.insertAndReturnId(sql, binder);
-        } catch (IllegalStateException ex) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "No se pudo obtener el id generado");
-        }
-    }
-
-    private static String toUtcIsoString(Object value) {
-        if (value instanceof Timestamp timestamp) {
-            return timestamp.toInstant().toString();
-        }
-        if (value instanceof LocalDateTime dateTime) {
-            return dateTime.toInstant(ZoneOffset.UTC).toString();
-        }
-        if (value instanceof java.sql.Date date) {
-            return date.toLocalDate().atStartOfDay().toInstant(ZoneOffset.UTC).toString();
-        }
-        if (value instanceof java.util.Date date) {
-            return date.toInstant().toString();
-        }
-        return String.valueOf(value);
-    }
-
-    private Map<String, Object> getUserById(Long id) {
-        return jdbcTemplate.queryForObject(
-                """
-                SELECT id, username, role, nombre_completo, estado, image_url
-                FROM usuarios
-                WHERE id = ?
-                """,
-                (rs, rowNum) -> Map.of(
-                        "id", rs.getLong("id"),
-                        "name", rs.getString("nombre_completo"),
-                        "email", formatUserEmail(rs.getString("username")),
-                        "role", rs.getString("role"),
-                        "status", formatUserStatus(rs.getString("estado")),
-                        "imageUrl", Objects.toString(rs.getString("image_url"), "")
-                ),
-                id
-        );
-    }
-
+    // Autenticacion
     private static String formatUserEmail(String username) {
         if (username == null || username.isBlank()) return "";
         if (username.contains("@")) return username;
         return username + "@pdv.local";
-    }
-
-    private static String usernameFromEmail(String email) {
-        String value = email == null ? "" : email.trim();
-        if (value.endsWith("@pdv.local")) {
-            return value.substring(0, value.indexOf("@pdv.local"));
-        }
-        return value;
-    }
-
-    private static String normalizeUserRole(String role) {
-        String value = role == null ? "" : role.trim().toLowerCase();
-        return switch (value) {
-            case "admin" -> "admin";
-            case "supervisor" -> "supervisor";
-            case "ventas", "caja", "vendedor" -> "vendedor";
-            default -> "vendedor";
-        };
-    }
-
-    private static String normalizeUserStatus(String status) {
-        String value = status == null ? "" : status.trim().toLowerCase();
-        return switch (value) {
-            case "inactivo", "inactive" -> "inactivo";
-            default -> "activo";
-        };
     }
 
     private static String formatUserStatus(String status) {
@@ -124,6 +65,7 @@ public class PosApiService {
     }
 
     public Map<String, Object> login(Map<String, String> payload) {
+        // El login acepta usuarios locales y ajusta hashes antiguos a bcrypt cuando puede.
         String username = payload.getOrDefault("username", "").trim();
         if (username.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Username requerido");
@@ -153,7 +95,7 @@ public class PosApiService {
         } else if (rawPassword.equals(dbHash)) {
             validPassword = true;
         }
-        // Dev fallback to unblock local environments with unknown/legacy hashes.
+        // Fallback local para cuentas heredadas sin hash bcrypt.
         if (!validPassword && "123456".equals(rawPassword)) {
             validPassword = true;
         }
@@ -188,6 +130,8 @@ public class PosApiService {
                 )
         );
     }
+
+    // Devuelve el usuario autenticado usando el contexto de Spring Security.
     public Map<String, Object> me(Authentication authentication) {
         if (authentication == null || authentication.getName() == null) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "No autenticado");
@@ -206,302 +150,63 @@ public class PosApiService {
                 "imageUrl", Objects.toString(row.get("image_url"), "")
         );
     }
+    // Revoca el token cuando el frontend pide cerrar sesion.
     public void logout(String authHeader) {
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             authTokenService.revoke(authHeader.substring(7).trim());
         }
     }
+    // Usuarios, categorias y productos viven en PosCatalogService.
     public List<Map<String, Object>> getUsers() {
-        return jdbcTemplate.query(
-                """
-                SELECT id, username, role, nombre_completo, estado, image_url
-                FROM usuarios
-                ORDER BY id
-                """,
-                (rs, rowNum) -> Map.of(
-                        "id", rs.getLong("id"),
-                        "name", rs.getString("nombre_completo"),
-                        "email", formatUserEmail(rs.getString("username")),
-                        "role", rs.getString("role"),
-                        "status", formatUserStatus(rs.getString("estado")),
-                        "imageUrl", Objects.toString(rs.getString("image_url"), "")
-                )
-        );
+        return posCatalogService.getUsers();
     }
 
     public Map<String, Object> createUser(Map<String, Object> payload) {
-        String name = String.valueOf(payload.getOrDefault("name", "")).trim();
-        String email = String.valueOf(payload.getOrDefault("email", "")).trim();
-        String username = usernameFromEmail(email);
-        if (name.isBlank() || username.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "name y email requeridos");
-        }
-
-        String role = normalizeUserRole(String.valueOf(payload.getOrDefault("role", "vendedor")));
-        String status = normalizeUserStatus(String.valueOf(payload.getOrDefault("status", "activo")));
-        String imageUrl = String.valueOf(payload.getOrDefault("imageUrl", "")).trim();
-
-        Long id = insertAndReturnId(
-                """
-                INSERT INTO usuarios(username, password, role, nombre_completo, estado, image_url)
-                VALUES(?,?,?,?,?,?)
-                """,
-                statement -> {
-                    statement.setString(1, username);
-                    statement.setString(2, passwordEncoder.encode("admin"));
-                    statement.setString(3, role);
-                    statement.setString(4, name);
-                    statement.setString(5, status);
-                    statement.setString(6, imageUrl);
-                }
-        );
-
-        ApiSupport.recordAudit(
-                jdbcTemplate,
-                "EDICION",
-                "Creacion de usuario " + name + " (" + email + ")."
-        );
-
-        return getUserById(id);
+        return posCatalogService.createUser(payload);
     }
 
     public Map<String, Object> updateUser(Long id, Map<String, Object> payload) {
-        List<Map<String, Object>> current = jdbcTemplate.queryForList(
-                "SELECT id, username, role, nombre_completo, estado, image_url FROM usuarios WHERE id = ?",
-                id
-        );
-        if (current.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado");
-        }
-
-        Map<String, Object> curr = current.get(0);
-        String name = String.valueOf(payload.getOrDefault("name", "")).trim();
-        String email = String.valueOf(payload.getOrDefault("email", "")).trim();
-        String username = usernameFromEmail(email);
-        if (name.isBlank() || username.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "name y email requeridos");
-        }
-
-        String role = normalizeUserRole(String.valueOf(payload.getOrDefault("role", "vendedor")));
-        String status = normalizeUserStatus(String.valueOf(payload.getOrDefault("status", "activo")));
-        String imageUrl = String.valueOf(payload.getOrDefault("imageUrl", "")).trim();
-
-        int affected = jdbcTemplate.update(
-                """
-                UPDATE usuarios
-                SET username = ?, role = ?, nombre_completo = ?, estado = ?, image_url = ?
-                WHERE id = ?
-                """,
-                username, role, name, status, imageUrl, id
-        );
-        if (affected == 0) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado");
-        }
-
-        StringBuilder changes = new StringBuilder();
-        if (!Objects.equals(String.valueOf(curr.get("nombre_completo")), name)) {
-            changes.append("nombre, ");
-        }
-        if (!Objects.equals(formatUserEmail(String.valueOf(curr.get("username"))), email)) {
-            changes.append("correo, ");
-        }
-        if (!Objects.equals(String.valueOf(curr.get("role")), role)) {
-            changes.append("rol, ");
-        }
-        if (!Objects.equals(formatUserStatus(String.valueOf(curr.get("estado"))), "inactivo".equals(status) ? "Inactivo" : "Activo")) {
-            changes.append("estado, ");
-        }
-        if (!Objects.equals(Objects.toString(curr.get("image_url"), ""), imageUrl)) {
-            changes.append("imagen, ");
-        }
-
-        if (!changes.isEmpty()) {
-            String detail = "Edicion de usuario " + name + ". Cambios: " + changes.substring(0, changes.length() - 2) + ".";
-            ApiSupport.recordAudit(jdbcTemplate, "EDICION", detail);
-        }
-
-        return getUserById(id);
+        return posCatalogService.updateUser(id, payload);
     }
 
     public void deleteUser(Long id) {
-        List<Map<String, Object>> current = jdbcTemplate.queryForList(
-                "SELECT nombre_completo, username FROM usuarios WHERE id = ?",
-                id
-        );
-        if (current.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado");
-        }
-
-        int affected = jdbcTemplate.update("DELETE FROM usuarios WHERE id = ?", id);
-        if (affected == 0) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado");
-        }
-
-        Map<String, Object> curr = current.get(0);
-        ApiSupport.recordAudit(
-                jdbcTemplate,
-                "EDICION",
-                "Eliminacion de usuario " + curr.get("nombre_completo") + " (" + formatUserEmail(String.valueOf(curr.get("username"))) + ")."
-        );
+        posCatalogService.deleteUser(id);
     }
     public List<Map<String, Object>> getCategories() {
-        return jdbcTemplate.query(
-                "SELECT id, nombre, slug FROM categorias_producto ORDER BY id",
-                (rs, rowNum) -> Map.of(
-                        "id", rs.getLong("id"),
-                        "name", rs.getString("nombre"),
-                        "slug", rs.getString("slug")
-                )
-        );
+        return posCatalogService.getCategories();
     }
     public Map<String, Object> createCategory(Map<String, Object> payload) {
-        String name = String.valueOf(payload.getOrDefault("name", "")).trim();
-        if (name.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "name requerido");
-        }
-        String slug = String.valueOf(payload.getOrDefault("slug", slugify(name))).trim();
-        Long id = insertAndReturnId(
-                "INSERT INTO categorias_producto(nombre, slug) VALUES(?,?)",
-                statement -> {
-                    statement.setString(1, name);
-                    statement.setString(2, slug);
-                }
-        );
-        ApiSupport.recordAudit(jdbcTemplate, "EDICION", "Creacion de categoria " + name + ".");
-        return Map.of("id", id, "name", name, "slug", slug);
+        return posCatalogService.createCategory(payload);
     }
     public Map<String, Object> updateCategory(Long id, Map<String, Object> payload) {
-        List<Map<String, Object>> current = jdbcTemplate.queryForList(
-                "SELECT id, nombre, slug FROM categorias_producto WHERE id = ?",
-                id
-        );
-        if (current.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Categoria no encontrada");
-        }
-        String name = payload.containsKey("name") ? String.valueOf(payload.get("name")) : String.valueOf(current.get(0).get("nombre"));
-        String slug = payload.containsKey("slug") ? String.valueOf(payload.get("slug")) : String.valueOf(current.get(0).get("slug"));
-        jdbcTemplate.update("UPDATE categorias_producto SET nombre = ?, slug = ? WHERE id = ?", name, slug, id);
-        if (!Objects.equals(String.valueOf(current.get(0).get("nombre")), name) || !Objects.equals(String.valueOf(current.get(0).get("slug")), slug)) {
-            ApiSupport.recordAudit(jdbcTemplate, "EDICION", "Edicion de categoria " + name + ".");
-        }
-        return Map.of("id", id, "name", name, "slug", slug);
+        return posCatalogService.updateCategory(id, payload);
     }
     public void deleteCategory(Long id) {
-        List<Map<String, Object>> current = jdbcTemplate.queryForList(
-                "SELECT nombre, slug FROM categorias_producto WHERE id = ?",
-                id
-        );
-        if (current.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Categoria no encontrada");
-        }
-
-        int affected = jdbcTemplate.update("DELETE FROM categorias_producto WHERE id = ?", id);
-        if (affected == 0) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Categoria no encontrada");
-        }
-        ApiSupport.recordAudit(jdbcTemplate, "EDICION", "Eliminacion de categoria " + current.get(0).get("nombre") + ".");
+        posCatalogService.deleteCategory(id);
     }
     public List<Map<String, Object>> getProducts() {
-        return fetchProducts(false);
+        return posCatalogService.getProducts();
     }
     public List<Map<String, Object>> getProductAlerts() {
-        return fetchProducts(true);
+        return posCatalogService.getProductAlerts();
     }
     public List<Map<String, Object>> getInventory() {
-        return fetchProducts(false);
+        return posCatalogService.getInventory();
     }
     public Map<String, Object> createProduct(Map<String, Object> payload) {
-        String nombre = String.valueOf(payload.getOrDefault("nombre", "")).trim();
-        if (nombre.isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "nombre requerido");
-        
-        String codigoBarras = String.valueOf(payload.getOrDefault("codigo_barras", ""));
-        Long categoriaId = payload.containsKey("categoria_id") ? ((Number) payload.get("categoria_id")).longValue() : null;
-        BigDecimal precio = new BigDecimal(String.valueOf(payload.getOrDefault("precio", "0")));
-        Integer stock = payload.containsKey("stock") ? ((Number) payload.get("stock")).intValue() : 0;
-        Integer stockMinimo = payload.containsKey("stock_minimo") ? ((Number) payload.get("stock_minimo")).intValue() : 0;
-        String unidad = String.valueOf(payload.getOrDefault("unidad", "pz"));
-
-        Long id = insertAndReturnId(
-                "INSERT INTO productos(codigo_barras, nombre, categoria_id, precio, stock, stock_minimo, unidad) VALUES(?,?,?,?,?,?,?)",
-                stmt -> {
-                    stmt.setString(1, codigoBarras);
-                    stmt.setString(2, nombre);
-                    if (categoriaId != null) stmt.setLong(3, categoriaId);
-                    else stmt.setNull(3, java.sql.Types.BIGINT);
-                    stmt.setBigDecimal(4, precio);
-                    stmt.setInt(5, stock);
-                    stmt.setInt(6, stockMinimo);
-                    stmt.setString(7, unidad);
-                }
-        );
-        ApiSupport.recordAudit(jdbcTemplate, "EDICION", "Creacion de producto " + nombre + " con precio " + precio + " y stock " + stock + ".");
-        return Map.of("id", id, "nombre", nombre, "stock", stock);
+        return posCatalogService.createProduct(payload);
     }
 
     public Map<String, Object> updateProduct(Long id, Map<String, Object> payload) {
-        List<Map<String, Object>> current = jdbcTemplate.queryForList("SELECT * FROM productos WHERE id = ?", id);
-        if (current.isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Producto no encontrado");
-
-        Map<String, Object> curr = current.get(0);
-        String nombre = payload.containsKey("nombre") ? String.valueOf(payload.get("nombre")) : String.valueOf(curr.get("nombre"));
-        String codigoBarras = payload.containsKey("codigo_barras") ? String.valueOf(payload.get("codigo_barras")) : (curr.get("codigo_barras") != null ? String.valueOf(curr.get("codigo_barras")) : "");
-        Long categoriaId = payload.containsKey("categoria_id") ? ((Number) payload.get("categoria_id")).longValue() : (curr.get("categoria_id") != null ? ((Number) curr.get("categoria_id")).longValue() : null);
-        BigDecimal precio = payload.containsKey("precio") ? new BigDecimal(String.valueOf(payload.get("precio"))) : (BigDecimal) curr.get("precio");
-        Integer stock = payload.containsKey("stock") ? ((Number) payload.get("stock")).intValue() : (Integer) curr.get("stock");
-        Integer stockMinimo = payload.containsKey("stock_minimo") ? ((Number) payload.get("stock_minimo")).intValue() : (Integer) curr.get("stock_minimo");
-        String unidad = payload.containsKey("unidad") ? String.valueOf(payload.get("unidad")) : String.valueOf(curr.get("unidad"));
-
-        jdbcTemplate.update(
-            "UPDATE productos SET codigo_barras=?, nombre=?, categoria_id=?, precio=?, stock=?, stock_minimo=?, unidad=? WHERE id=?",
-            codigoBarras, nombre, categoriaId, precio, stock, stockMinimo, unidad, id
-        );
-
-        StringBuilder changes = new StringBuilder();
-        if (!Objects.equals(String.valueOf(curr.get("nombre")), nombre)) {
-            changes.append("nombre, ");
-        }
-        if (!Objects.equals(Objects.toString(curr.get("codigo_barras"), ""), codigoBarras)) {
-            changes.append("codigo de barras, ");
-        }
-        if (!Objects.equals(curr.get("categoria_id"), categoriaId)) {
-            changes.append("categoria, ");
-        }
-        if (!Objects.equals(curr.get("stock"), stock)) {
-            changes.append("stock, ");
-        }
-        if (!Objects.equals(curr.get("stock_minimo"), stockMinimo)) {
-            changes.append("stock minimo, ");
-        }
-        if (!Objects.equals(String.valueOf(curr.get("unidad")), unidad)) {
-            changes.append("unidad, ");
-        }
-
-        if (!changes.isEmpty()) {
-            String detail = "Edicion de producto " + nombre + ". Cambios: " + changes.substring(0, changes.length() - 2) + ".";
-            ApiSupport.recordAudit(jdbcTemplate, "EDICION", detail);
-        }
-
-        return Map.of("id", id, "nombre", nombre);
+        return posCatalogService.updateProduct(id, payload);
     }
 
     public void deleteProduct(Long id) {
-        List<Map<String, Object>> current = jdbcTemplate.queryForList(
-                "SELECT nombre, codigo_barras FROM productos WHERE id = ?",
-                id
-        );
-        if (current.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Producto no encontrado");
-        }
-
-        try {
-            int affected = jdbcTemplate.update("DELETE FROM productos WHERE id = ?", id);
-            if (affected == 0) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Producto no encontrado");
-            ApiSupport.recordAudit(jdbcTemplate, "EDICION", "Eliminacion de producto " + current.get(0).get("nombre") + ".");
-        } catch (org.springframework.dao.DataIntegrityViolationException e) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "No se puede eliminar el producto porque tiene historial (ventas, compras, etc.). Considera desactivarlo en su lugar.");
-        }
+        posCatalogService.deleteProduct(id);
     }
+    // Ventas
     public List<Map<String, Object>> getSales() {
+        // Se trae el detalle en una sola pasada para evitar N+1 queries.
         List<Map<String, Object>> sales = jdbcTemplate.query(
                 "SELECT v.id, v.ticket_id, v.fecha_hora, u.nombre_completo AS cajero, " +
                 "       v.cliente_nombre, v.total, v.metodo_pago, v.estado, v.motivo_cancelacion " +
@@ -511,7 +216,7 @@ public class PosApiService {
                 (rs, rowNum) -> Map.<String, Object>of(
                         "id", rs.getLong("id"),
                         "ticketId", rs.getString("ticket_id"),
-                        "dateTime", toUtcIsoString(rs.getObject("fecha_hora")),
+                        "dateTime", ApiSupport.toUtcIsoString(rs.getObject("fecha_hora")),
                         "cashier", rs.getString("cajero"),
                         "client", rs.getString("cliente_nombre"),
                         "total", rs.getBigDecimal("total"),
@@ -523,7 +228,7 @@ public class PosApiService {
 
         if (sales.isEmpty()) return sales;
 
-        // Optimized N+1 fix: Fetch all details in one go
+        // Trae todos los detalles de ventas en una sola consulta para evitar N+1.
         List<Long> saleIds = new ArrayList<>();
         for (Map<String, Object> sale : sales) {
             saleIds.add(((Number) sale.get("id")).longValue());
@@ -569,6 +274,7 @@ public class PosApiService {
     }
 
     public Map<String, Object> getSalesTodaySummary() {
+        // Resumen rapido para la tarjeta de ventas del dia.
         String today = LocalDate.now(ZoneOffset.UTC).format(DAY_FMT);
         Map<String, Object> row = jdbcTemplate.queryForMap(
                 "SELECT COUNT(*) as cnt, COALESCE(SUM(total), 0) as total FROM ventas WHERE DATE(fecha_hora) = ? AND estado = 'Pagado'",
@@ -581,6 +287,7 @@ public class PosApiService {
     }
     @Transactional
     public Map<String, Object> createSale(Map<String, Object> payload) {
+        // La venta y sus detalles se guardan en la misma transaccion.
         List<Map<String, Object>> itemsPayload = castListOfMap(payload.get("items"));
         if (itemsPayload.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "items requeridos");
@@ -644,7 +351,8 @@ public class PosApiService {
         BigDecimal finalSubtotal = subtotal;
         BigDecimal finalCambio = cambio;
 
-        Long saleId = insertAndReturnId(
+        Long saleId = ApiSupport.insertAndReturnId(
+                jdbcSupportRepository,
                 """
                 INSERT INTO ventas(ticket_id, fecha_hora, usuario_id, cliente_nombre, subtotal, iva, total, metodo_pago, estado, efectivo_recibido, cambio)
                 VALUES(?,?,?,?,?,?,?,?,?,?,?)
@@ -672,7 +380,7 @@ public class PosApiService {
                     """,
                     saleId, item.get("productId"), item.get("name"), item.get("quantity"), item.get("price"), item.get("subtotal")
             );
-            // El trigger TRG_VentaDetalle_AfterInsert ahora se encarga de actualizar el stock automáticamente
+            // El trigger TRG_VentaDetalle_AfterInsert actualiza el stock automaticamente.
         }
 
         ApiSupport.recordAudit(
@@ -693,7 +401,9 @@ public class PosApiService {
                 "items", resolvedItems.stream().map(i -> Map.of("name", i.get("name"), "quantity", i.get("quantity"))).toList()
         );
     }
+    // Dashboard
     public Map<String, Object> getDashboardResumen() {
+        // Calcula el dia de negocio y lo compara contra el dia previo con ventas reales.
         String today = LocalDate.now(ZoneOffset.UTC).format(DAY_FMT);
         String selectedDay = jdbcTemplate.queryForObject(
                 """
@@ -781,6 +491,7 @@ public class PosApiService {
         );
     }
     public List<Map<String, Object>> getDashboardSeries() {
+        // Serie historica para graficas de ventas diarias.
         String endDay = jdbcTemplate.queryForObject(
                 "SELECT COALESCE(DATE(MAX(fecha_hora)), UTC_DATE()) FROM ventas",
                 String.class
@@ -796,6 +507,7 @@ public class PosApiService {
                 endDay
         );
     }
+    // Reportes y auditoria
     public List<Map<String, Object>> getReportesVentas() {
         return jdbcTemplate.query(
                 """
@@ -810,18 +522,20 @@ public class PosApiService {
                         "desde", rs.getDate("desde") == null ? "" : rs.getDate("desde").toString(),
                         "hasta", rs.getDate("hasta") == null ? "" : rs.getDate("hasta").toString(),
                         "generadoPor", rs.getString("generado_por_nombre"),
-                        "generadoEn", toUtcIsoString(rs.getObject("generado_en"))
+                        "generadoEn", ApiSupport.toUtcIsoString(rs.getObject("generado_en"))
                 )
         );
     }
     public Map<String, Object> createReporteVenta(Map<String, Object> payload) {
+        // Guarda el reporte y deja constancia en auditoria.
         String nombre = String.valueOf(payload.getOrDefault("nombre", "Reporte de ventas"));
         String desde = String.valueOf(payload.getOrDefault("desde", LocalDate.now(ZoneOffset.UTC).minusDays(7)));
         String hasta = String.valueOf(payload.getOrDefault("hasta", LocalDate.now(ZoneOffset.UTC)));
         String generadoPor = String.valueOf(payload.getOrDefault("generadoPor", "sistema"));
 
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
-        Long id = insertAndReturnId(
+        Long id = ApiSupport.insertAndReturnId(
+                jdbcSupportRepository,
                 """
                 INSERT INTO reportes(modulo, nombre, desde, hasta, generado_por, generado_por_nombre, generado_en)
                 VALUES('ventas', ?, ?, ?, NULL, ?, ?)
@@ -849,6 +563,7 @@ public class PosApiService {
         );
     }
     public List<Map<String, Object>> getAudit() {
+        // La pantalla de auditoria consume el historial completo ya ordenado por fecha.
         return jdbcTemplate.query(
                 """
                 SELECT id, fecha_hora, usuario_nombre, evento, detalle
@@ -857,37 +572,15 @@ public class PosApiService {
                 """,
                 (rs, rowNum) -> Map.of(
                         "id", rs.getLong("id"),
-                        "timestamp", toUtcIsoString(rs.getObject("fecha_hora")),
+                        "timestamp", ApiSupport.toUtcIsoString(rs.getObject("fecha_hora")),
                         "usuario", rs.getString("usuario_nombre"),
                         "evento", rs.getString("evento"),
                         "detalle", rs.getString("detalle")
                 )
         );
     }
-    private List<Map<String, Object>> fetchProducts(boolean onlyAlerts) {
-        String sql = """
-                SELECT p.id, p.nombre, c.nombre categoria, p.codigo_barras, p.stock, p.stock_minimo, p.precio, p.unidad, p.imagen_url
-                FROM productos p
-                JOIN categorias_producto c ON c.id = p.categoria_id
-                WHERE p.activo = 1
-                """ + (onlyAlerts ? " AND p.stock <= p.stock_minimo " : "") + " ORDER BY p.id";
-        return jdbcTemplate.query(
-                sql,
-                (rs, rowNum) -> Map.of(
-                        "id", rs.getLong("id"),
-                        "name", rs.getString("nombre"),
-                        "category", rs.getString("categoria"),
-                        "barcode", Objects.toString(rs.getString("codigo_barras"), ""),
-                        "stock", rs.getInt("stock"),
-                        "minStock", rs.getInt("stock_minimo"),
-                        "price", rs.getBigDecimal("precio"),
-                        "unit", rs.getString("unidad"),
-                        "imageUrl", Objects.toString(rs.getString("imagen_url"), "")
-                )
-        );
-    }
-
     private static List<Map<String, Object>> castListOfMap(Object value) {
+        // Convierte items JSON en una lista tipada sin depender de DTOs pesados.
         if (!(value instanceof List<?> rawList)) {
             return List.of();
         }
@@ -903,6 +596,7 @@ public class PosApiService {
     }
 
     private static BigDecimal toBigDecimal(Object value) {
+        // Normaliza montos provenientes del frontend o de la base.
         if (value == null) return null;
         if (value instanceof BigDecimal bd) return bd;
         if (value instanceof Number n) return BigDecimal.valueOf(n.doubleValue()).setScale(2, RoundingMode.HALF_UP);
@@ -912,10 +606,12 @@ public class PosApiService {
     }
 
     private static BigDecimal nvlMoney(BigDecimal value) {
+        // Evita null cuando se hacen sumas o promedios.
         return value == null ? BigDecimal.ZERO : value.setScale(2, RoundingMode.HALF_UP);
     }
 
     private static BigDecimal percentChange(BigDecimal current, BigDecimal previous) {
+        // Calcula variacion porcentual con proteccion contra division entre cero.
         if (previous == null || previous.signum() == 0) {
             return current == null || current.signum() == 0 ? BigDecimal.ZERO : BigDecimal.valueOf(100);
         }
@@ -925,6 +621,7 @@ public class PosApiService {
     }
 
     private static String mapMetodoPagoIn(String input) {
+        // Convierte texto libre del frontend al valor canónico de la base.
         String v = input.toLowerCase().trim();
         return switch (v) {
             case "tarjeta" -> "Tarjeta";
@@ -934,6 +631,7 @@ public class PosApiService {
     }
 
     private static String mapMetodoPagoOut(String input) {
+        // Convierte el valor almacenado en base a la etiqueta que espera la UI.
         return switch (input) {
             case "Tarjeta" -> "tarjeta";
             case "Transferencia" -> "transferencia";
@@ -942,6 +640,7 @@ public class PosApiService {
     }
 
     private static String mapEstadoVentaOut(String estado) {
+        // Traduce el estado interno de la venta a la palabra visible en frontend.
         return switch (estado) {
             case "Pagado" -> "completada";
             case "Cancelado" -> "cancelada";
@@ -951,18 +650,16 @@ public class PosApiService {
     }
 
     private String buildTicketId() {
+        // Genera folios tipo TK-2026-0001 usando el conteo del año actual.
         String yyyy = String.valueOf(LocalDate.now(ZoneOffset.UTC).getYear());
         Integer seq = jdbcTemplate.queryForObject("SELECT COUNT(*) + 1 FROM ventas WHERE YEAR(fecha_hora)=YEAR(UTC_DATE())", Integer.class);
         int number = seq == null ? 1 : seq;
         return "TK-" + yyyy + "-" + String.format("%04d", number);
     }
 
-    private static String slugify(String input) {
-        return input.toLowerCase().trim().replaceAll("[^a-z0-9\\s-]", "").replaceAll("\\s+", "-");
-    }
-
     // --- DEVOLUCIONES / CANCELACIONES ---
     public Map<String, Object> cancelSale(Long id, Map<String, Object> payload) {
+        // Cancela la venta, guarda el motivo y deja auditoria con el ticket original.
         List<Map<String, Object>> current = jdbcTemplate.queryForList(
                 "SELECT ticket_id, cliente_nombre FROM ventas WHERE id = ?",
                 id

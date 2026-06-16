@@ -17,6 +17,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/users")
+// CRUD de usuarios y su perfil visible en el frontend.
 public class UserController {
 
     private final PosApiService posApiService;

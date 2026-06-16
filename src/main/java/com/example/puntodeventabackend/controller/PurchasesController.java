@@ -9,6 +9,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api")
+// Proveedores y compras.
 public class PurchasesController {
 
     private final PurchasesService purchasesService;

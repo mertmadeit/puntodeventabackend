@@ -10,6 +10,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/auth")
+// Entrada de autenticacion: login, usuario actual y cierre de sesion.
 public class AuthController {
 
     private final PosApiService posApiService;

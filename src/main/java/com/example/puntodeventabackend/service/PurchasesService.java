@@ -17,6 +17,12 @@ import java.util.List;
 import java.util.Map;
 
 @Service
+/**
+ * Maneja proveedores y compras.
+ *
+ * La compra guarda encabezado y detalle en la misma transaccion para evitar
+ * registros parciales.
+ */
 public class PurchasesService {
 
     private final JdbcTemplate jdbcTemplate;
@@ -27,6 +33,7 @@ public class PurchasesService {
         this.jdbcSupportRepository = jdbcSupportRepository;
     }
 
+    // Lista proveedores activos o historicos segun el estado guardado.
     public List<Map<String, Object>> getProveedores() {
         return jdbcTemplate.query(
                 "SELECT id, nombre, contacto, telefono, rfc, activo FROM proveedores ORDER BY nombre",
@@ -41,6 +48,7 @@ public class PurchasesService {
         );
     }
 
+    // Crea un proveedor nuevo y registra el alta en auditoria.
     public Map<String, Object> createProveedor(Map<String, Object> payload) {
         String nombre = ApiSupport.optionalString(payload.get("nombre"));
         if (nombre.isBlank()) {
@@ -64,6 +72,7 @@ public class PurchasesService {
         return Map.of("id", id, "nombre", nombre, "contacto", contacto, "telefono", telefono, "rfc", rfc, "activo", true);
     }
 
+    // Edita proveedor manteniendo el resto de datos intactos si no se envian.
     public Map<String, Object> updateProveedor(Long id, Map<String, Object> payload) {
         List<Map<String, Object>> current = jdbcTemplate.queryForList("SELECT * FROM proveedores WHERE id = ?", id);
         if (current.isEmpty()) {
@@ -88,6 +97,7 @@ public class PurchasesService {
         return Map.of("id", id, "nombre", nombre, "contacto", contacto, "telefono", telefono, "rfc", rfc, "activo", activo);
     }
 
+    // Elimina un proveedor solo si la base no lo esta usando en compras.
     public void deleteProveedor(Long id) {
         List<Map<String, Object>> current = jdbcTemplate.queryForList(
                 "SELECT nombre FROM proveedores WHERE id = ?",
@@ -111,6 +121,7 @@ public class PurchasesService {
         }
     }
 
+    // Lista compras con su proveedor y el usuario que las registró.
     public List<Map<String, Object>> getCompras() {
         return jdbcTemplate.query(
                 """
@@ -131,6 +142,7 @@ public class PurchasesService {
         );
     }
 
+    // Crea la compra completa: valida items, calcula total y guarda detalle.
     @Transactional
     public Map<String, Object> createCompra(Map<String, Object> payload) {
         Long proveedorId = ApiSupport.requireLong(payload.get("proveedorId"), "proveedorId requerido", "proveedorId invalido");
@@ -195,6 +207,7 @@ public class PurchasesService {
         return Map.of("id", compraId, "total", finalTotal, "estado", "Completado");
     }
 
+    // Verifica que el proveedor exista antes de grabar la compra.
     private void ensureProveedorExists(Long proveedorId) {
         Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM proveedores WHERE id = ?", Integer.class, proveedorId);
         if (count == null || count == 0) {
@@ -202,6 +215,7 @@ public class PurchasesService {
         }
     }
 
+    // Busca un usuario de respaldo para asociar la compra si no viene uno directo.
     private Long getDefaultUserId() {
         List<Long> ids = jdbcTemplate.queryForList("SELECT id FROM usuarios ORDER BY id LIMIT 1", Long.class);
         if (ids.isEmpty()) {
@@ -210,6 +224,7 @@ public class PurchasesService {
         return ids.get(0);
     }
 
+    // Resuelve el nombre del producto para que el detalle quede legible.
     private String getProductName(Long productId) {
         List<String> names = jdbcTemplate.queryForList("SELECT nombre FROM productos WHERE id = ?", String.class, productId);
         if (names.isEmpty()) {
@@ -218,6 +233,7 @@ public class PurchasesService {
         return names.get(0);
     }
 
+    // Resuelve el nombre del proveedor para dejar una auditoria clara.
     private String getProveedorName(Long proveedorId) {
         List<String> names = jdbcTemplate.queryForList("SELECT nombre FROM proveedores WHERE id = ?", String.class, proveedorId);
         if (names.isEmpty()) {

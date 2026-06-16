@@ -9,6 +9,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api")
+// Reportes de ventas y consulta del historial de auditoria.
 public class ReportsController {
 
     private final PosApiService posApiService;
