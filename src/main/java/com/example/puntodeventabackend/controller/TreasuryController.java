@@ -1,6 +1,6 @@
 package com.example.puntodeventabackend.controller;
 
-import com.example.puntodeventabackend.service.PosApiService;
+import com.example.puntodeventabackend.service.TreasuryService;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
@@ -11,41 +11,41 @@ import java.util.Map;
 @RequestMapping("/api/tesoreria")
 public class TreasuryController {
 
-    private final PosApiService posApiService;
+    private final TreasuryService treasuryService;
 
-    public TreasuryController(PosApiService posApiService) {
-        this.posApiService = posApiService;
+    public TreasuryController(TreasuryService treasuryService) {
+        this.treasuryService = treasuryService;
     }
 
     @GetMapping("/resumen")
     public Map<String, Object> getTesoreriaResumen() {
-        return posApiService.getTesoreriaResumen();
+        return treasuryService.getResumen();
     }
 
     @GetMapping("/movimientos")
     public List<Map<String, Object>> getTesoreriaMovimientos() {
-        return posApiService.getTesoreriaMovimientos();
+        return treasuryService.getMovimientos();
     }
 
     @PostMapping("/movimientos")
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, Object> createTesoreriaMovimiento(@RequestBody Map<String, Object> payload) {
-        return posApiService.createTesoreriaMovimiento(payload);
+        return treasuryService.createMovimiento(payload);
     }
 
     @GetMapping("/cortes")
     public List<Map<String, Object>> getTesoreriaCortes() {
-        return posApiService.getTesoreriaCortes();
+        return treasuryService.getCortes();
     }
 
     @PostMapping("/cortes")
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, Object> createTesoreriaCorte(@RequestBody Map<String, Object> payload) {
-        return posApiService.createTesoreriaCorte(payload);
+        return treasuryService.createCorte(payload);
     }
 
     @GetMapping("/turnos")
     public List<Map<String, Object>> getTesoreriaTurnos() {
-        return posApiService.getTesoreriaTurnos();
+        return treasuryService.getTurnos();
     }
 }

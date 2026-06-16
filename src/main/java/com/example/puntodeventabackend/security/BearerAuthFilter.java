@@ -27,6 +27,7 @@ public class BearerAuthFilter extends OncePerRequestFilter {
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = request.getRequestURI();
+        // Preflight y endpoints publicos no deben exigir token.
         if (HttpMethod.OPTIONS.matches(request.getMethod())) {
             return true;
         }
@@ -55,6 +56,7 @@ public class BearerAuthFilter extends OncePerRequestFilter {
             return;
         }
 
+        // Spring Security espera autoridades con prefijo ROLE_ para usar hasAnyRole().
         String role = session.role() == null ? "USER" : session.role().toUpperCase();
         UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(
                 session.username(),

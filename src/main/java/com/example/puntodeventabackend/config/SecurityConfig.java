@@ -37,6 +37,7 @@ public class SecurityConfig {
         return http
                 .csrf(csrf -> csrf.disable())
                 .cors(Customizer.withDefaults())
+                // La API usa bearer tokens propios, por eso no conserva sesion HTTP en el servidor.
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/health", "/api/auth/login").permitAll()
@@ -55,6 +56,7 @@ public class SecurityConfig {
         CorsConfiguration config = new CorsConfiguration();
         List<String> origins = parseCsv(allowedOrigins);
         List<String> originPatterns = parseCsv(allowedOriginPatterns);
+        // Origenes exactos para local; patrones para despliegues dinamicos como Railway.
         if (!origins.isEmpty()) {
             config.setAllowedOrigins(origins);
         }
