@@ -54,7 +54,8 @@ public class PosApiService {
     }
 
     // Autenticacion
-    private static String formatUserEmail(String username) {
+    private static String formatUserEmail(String email, String username) {
+        if (email != null && !email.isBlank()) return email;
         if (username == null || username.isBlank()) return "";
         if (username.contains("@")) return username;
         return username + "@pdv.local";
@@ -72,7 +73,8 @@ public class PosApiService {
         }
 
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                "SELECT id, username, password, role, nombre_completo, estado FROM usuarios WHERE username = ? LIMIT 1",
+                "SELECT id, username, email, password, role, nombre_completo, estado FROM usuarios WHERE username = ? OR email = ? LIMIT 1",
+                username,
                 username
         );
         if (rows.isEmpty()) {
@@ -137,13 +139,13 @@ public class PosApiService {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "No autenticado");
         }
         Map<String, Object> row = jdbcTemplate.queryForMap(
-                "SELECT id, username, role, nombre_completo, estado, image_url FROM usuarios WHERE username = ? LIMIT 1",
+                "SELECT id, username, email, role, nombre_completo, estado, image_url FROM usuarios WHERE username = ? LIMIT 1",
                 authentication.getName()
         );
         return Map.of(
                 "id", row.get("id"),
                 "username", row.get("username"),
-                "email", formatUserEmail(String.valueOf(row.get("username"))),
+                "email", formatUserEmail(Objects.toString(row.get("email"), ""), String.valueOf(row.get("username"))),
                 "name", row.get("nombre_completo"),
                 "role", row.get("role"),
                 "status", formatUserStatus(String.valueOf(row.get("estado"))),

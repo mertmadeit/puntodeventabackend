@@ -15,6 +15,9 @@ public class UsuarioEntity {
     @Column(name = "username", nullable = false, unique = true)
     private String username;
 
+    @Column(name = "email", length = 120, unique = true)
+    private String email;
+
     @Column(name = "password", length = 255)
     private String password;
 
@@ -36,6 +39,10 @@ public class UsuarioEntity {
 
     public String getUsername() {
         return username;
+    }
+
+    public String getEmail() {
+        return email;
     }
 
     public String getPassword() {

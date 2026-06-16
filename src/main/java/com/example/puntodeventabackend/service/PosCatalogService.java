@@ -1,6 +1,7 @@
 package com.example.puntodeventabackend.service;
 
 import com.example.puntodeventabackend.repository.JdbcSupportRepository;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -35,14 +36,14 @@ public class PosCatalogService {
     public List<Map<String, Object>> getUsers() {
         return jdbcTemplate.query(
                 """
-                SELECT id, username, role, nombre_completo, estado, image_url
+                SELECT id, username, email, role, nombre_completo, estado, image_url
                 FROM usuarios
                 ORDER BY id
                 """,
                 (rs, rowNum) -> Map.of(
                         "id", rs.getLong("id"),
                         "name", rs.getString("nombre_completo"),
-                        "email", formatUserEmail(rs.getString("username")),
+                        "email", formatUserEmail(rs.getString("email"), rs.getString("username")),
                         "role", rs.getString("role"),
                         "status", formatUserStatus(rs.getString("estado")),
                         "imageUrl", Objects.toString(rs.getString("image_url"), "")
@@ -70,21 +71,27 @@ public class PosCatalogService {
         String status = normalizeUserStatus(payloadStringOrDefault(payload, "status", "activo"));
         String imageUrl = payloadString(payload, "imageUrl");
 
-        Long id = ApiSupport.insertAndReturnId(
-                jdbcSupportRepository,
-                """
-                INSERT INTO usuarios(username, password, role, nombre_completo, estado, image_url)
-                VALUES(?,?,?,?,?,?)
-                """,
-                statement -> {
-                    statement.setString(1, username);
-                    statement.setString(2, passwordEncoder.encode(password));
-                    statement.setString(3, role);
-                    statement.setString(4, name);
-                    statement.setString(5, status);
-                    statement.setString(6, imageUrl);
-                }
-        );
+        Long id;
+        try {
+            id = ApiSupport.insertAndReturnId(
+                    jdbcSupportRepository,
+                    """
+                    INSERT INTO usuarios(username, email, password, role, nombre_completo, estado, image_url)
+                    VALUES(?,?,?,?,?,?,?)
+                    """,
+                    statement -> {
+                        statement.setString(1, username);
+                        statement.setString(2, email);
+                        statement.setString(3, passwordEncoder.encode(password));
+                        statement.setString(4, role);
+                        statement.setString(5, name);
+                        statement.setString(6, status);
+                        statement.setString(7, imageUrl);
+                    }
+            );
+        } catch (DataIntegrityViolationException ex) {
+            throw userConflict();
+        }
 
         ApiSupport.recordAudit(
                 jdbcTemplate,
@@ -98,7 +105,7 @@ public class PosCatalogService {
     // Actualiza datos de usuario y anota solo los campos que cambiaron.
     public Map<String, Object> updateUser(Long id, Map<String, Object> payload) {
         List<Map<String, Object>> current = jdbcTemplate.queryForList(
-                "SELECT id, username, role, nombre_completo, estado, image_url FROM usuarios WHERE id = ?",
+                "SELECT id, username, email, role, nombre_completo, estado, image_url FROM usuarios WHERE id = ?",
                 id
         );
         if (current.isEmpty()) {
@@ -123,24 +130,28 @@ public class PosCatalogService {
         }
 
         int affected;
-        if (updatePassword) {
-            affected = jdbcTemplate.update(
-                    """
-                    UPDATE usuarios
-                    SET username = ?, password = ?, role = ?, nombre_completo = ?, estado = ?, image_url = ?
-                    WHERE id = ?
-                    """,
-                    username, passwordEncoder.encode(password), role, name, status, imageUrl, id
-            );
-        } else {
-            affected = jdbcTemplate.update(
-                    """
-                    UPDATE usuarios
-                    SET username = ?, role = ?, nombre_completo = ?, estado = ?, image_url = ?
-                    WHERE id = ?
-                    """,
-                    username, role, name, status, imageUrl, id
-            );
+        try {
+            if (updatePassword) {
+                affected = jdbcTemplate.update(
+                        """
+                        UPDATE usuarios
+                        SET username = ?, email = ?, password = ?, role = ?, nombre_completo = ?, estado = ?, image_url = ?
+                        WHERE id = ?
+                        """,
+                        username, email, passwordEncoder.encode(password), role, name, status, imageUrl, id
+                );
+            } else {
+                affected = jdbcTemplate.update(
+                        """
+                        UPDATE usuarios
+                        SET username = ?, email = ?, role = ?, nombre_completo = ?, estado = ?, image_url = ?
+                        WHERE id = ?
+                        """,
+                        username, email, role, name, status, imageUrl, id
+                );
+            }
+        } catch (DataIntegrityViolationException ex) {
+            throw userConflict();
         }
         if (affected == 0) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado");
@@ -150,7 +161,7 @@ public class PosCatalogService {
         if (!Objects.equals(String.valueOf(curr.get("nombre_completo")), name)) {
             changes.append("nombre, ");
         }
-        if (!Objects.equals(formatUserEmail(String.valueOf(curr.get("username"))), email)) {
+        if (!Objects.equals(formatUserEmail(Objects.toString(curr.get("email"), ""), String.valueOf(curr.get("username"))), email)) {
             changes.append("correo, ");
         }
         if (!Objects.equals(String.valueOf(curr.get("role")), role)) {
@@ -177,7 +188,7 @@ public class PosCatalogService {
     // Elimina el usuario si no existe una restriccion de base.
     public void deleteUser(Long id) {
         List<Map<String, Object>> current = jdbcTemplate.queryForList(
-                "SELECT nombre_completo, username FROM usuarios WHERE id = ?",
+                "SELECT nombre_completo, username, email FROM usuarios WHERE id = ?",
                 id
         );
         if (current.isEmpty()) {
@@ -193,7 +204,7 @@ public class PosCatalogService {
         ApiSupport.recordAudit(
                 jdbcTemplate,
                 "EDICION",
-                "Eliminacion de usuario " + curr.get("nombre_completo") + " (" + formatUserEmail(String.valueOf(curr.get("username"))) + ")."
+                "Eliminacion de usuario " + curr.get("nombre_completo") + " (" + formatUserEmail(Objects.toString(curr.get("email"), ""), String.valueOf(curr.get("username"))) + ")."
         );
     }
 
@@ -378,14 +389,14 @@ public class PosCatalogService {
     private Map<String, Object> getUserById(Long id) {
         return jdbcTemplate.queryForObject(
                 """
-                SELECT id, username, role, nombre_completo, estado, image_url
+                SELECT id, username, email, role, nombre_completo, estado, image_url
                 FROM usuarios
                 WHERE id = ?
                 """,
                 (rs, rowNum) -> Map.of(
                         "id", rs.getLong("id"),
                         "name", rs.getString("nombre_completo"),
-                        "email", formatUserEmail(rs.getString("username")),
+                        "email", formatUserEmail(rs.getString("email"), rs.getString("username")),
                         "role", rs.getString("role"),
                         "status", formatUserStatus(rs.getString("estado")),
                         "imageUrl", Objects.toString(rs.getString("image_url"), "")
@@ -428,8 +439,13 @@ public class PosCatalogService {
         return value.isBlank() ? fallback : value;
     }
 
+    private static ResponseStatusException userConflict() {
+        return new ResponseStatusException(HttpStatus.CONFLICT, "Ya existe un usuario con ese correo");
+    }
+
     // Normaliza el nombre que el frontend usa para correo en pantalla.
-    private static String formatUserEmail(String username) {
+    private static String formatUserEmail(String email, String username) {
+        if (email != null && !email.isBlank()) return email;
         if (username == null || username.isBlank()) return "";
         if (username.contains("@")) return username;
         return username + "@pdv.local";
@@ -438,8 +454,9 @@ public class PosCatalogService {
     // El frontend puede mandar email completo o nombre simple; aqui se normaliza.
     private static String usernameFromEmail(String email) {
         String value = email == null ? "" : email.trim();
-        if (value.endsWith("@pdv.local")) {
-            return value.substring(0, value.indexOf("@pdv.local"));
+        int atIndex = value.indexOf("@");
+        if (atIndex > 0) {
+            return value.substring(0, atIndex);
         }
         return value;
     }
