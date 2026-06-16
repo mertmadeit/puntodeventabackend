@@ -130,7 +130,7 @@ public class PosApiService {
         }
 
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                "SELECT id, username, password, role, estado FROM usuarios WHERE username = ? LIMIT 1",
+                "SELECT id, username, password, role, nombre_completo, estado FROM usuarios WHERE username = ? LIMIT 1",
                 username
         );
         if (rows.isEmpty()) {
@@ -169,6 +169,14 @@ public class PosApiService {
                 ((Number) user.get("id")).longValue(),
                 String.valueOf(user.get("username")),
                 role
+        );
+
+        ApiSupport.recordAudit(
+                jdbcTemplate,
+                ((Number) user.get("id")).longValue(),
+                String.valueOf(user.get("nombre_completo")),
+                "LOGIN",
+                "Inicio de sesion exitoso."
         );
 
         return Map.of(
@@ -248,10 +256,25 @@ public class PosApiService {
                 }
         );
 
+        ApiSupport.recordAudit(
+                jdbcTemplate,
+                "EDICION",
+                "Creacion de usuario " + name + " (" + email + ")."
+        );
+
         return getUserById(id);
     }
 
     public Map<String, Object> updateUser(Long id, Map<String, Object> payload) {
+        List<Map<String, Object>> current = jdbcTemplate.queryForList(
+                "SELECT id, username, role, nombre_completo, estado, image_url FROM usuarios WHERE id = ?",
+                id
+        );
+        if (current.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado");
+        }
+
+        Map<String, Object> curr = current.get(0);
         String name = String.valueOf(payload.getOrDefault("name", "")).trim();
         String email = String.valueOf(payload.getOrDefault("email", "")).trim();
         String username = usernameFromEmail(email);
@@ -275,14 +298,51 @@ public class PosApiService {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado");
         }
 
+        StringBuilder changes = new StringBuilder();
+        if (!Objects.equals(String.valueOf(curr.get("nombre_completo")), name)) {
+            changes.append("nombre, ");
+        }
+        if (!Objects.equals(formatUserEmail(String.valueOf(curr.get("username"))), email)) {
+            changes.append("correo, ");
+        }
+        if (!Objects.equals(String.valueOf(curr.get("role")), role)) {
+            changes.append("rol, ");
+        }
+        if (!Objects.equals(formatUserStatus(String.valueOf(curr.get("estado"))), "inactivo".equals(status) ? "Inactivo" : "Activo")) {
+            changes.append("estado, ");
+        }
+        if (!Objects.equals(Objects.toString(curr.get("image_url"), ""), imageUrl)) {
+            changes.append("imagen, ");
+        }
+
+        if (!changes.isEmpty()) {
+            String detail = "Edicion de usuario " + name + ". Cambios: " + changes.substring(0, changes.length() - 2) + ".";
+            ApiSupport.recordAudit(jdbcTemplate, "EDICION", detail);
+        }
+
         return getUserById(id);
     }
 
     public void deleteUser(Long id) {
+        List<Map<String, Object>> current = jdbcTemplate.queryForList(
+                "SELECT nombre_completo, username FROM usuarios WHERE id = ?",
+                id
+        );
+        if (current.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado");
+        }
+
         int affected = jdbcTemplate.update("DELETE FROM usuarios WHERE id = ?", id);
         if (affected == 0) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado");
         }
+
+        Map<String, Object> curr = current.get(0);
+        ApiSupport.recordAudit(
+                jdbcTemplate,
+                "EDICION",
+                "Eliminacion de usuario " + curr.get("nombre_completo") + " (" + formatUserEmail(String.valueOf(curr.get("username"))) + ")."
+        );
     }
     public List<Map<String, Object>> getCategories() {
         return jdbcTemplate.query(
@@ -307,6 +367,7 @@ public class PosApiService {
                     statement.setString(2, slug);
                 }
         );
+        ApiSupport.recordAudit(jdbcTemplate, "EDICION", "Creacion de categoria " + name + ".");
         return Map.of("id", id, "name", name, "slug", slug);
     }
     public Map<String, Object> updateCategory(Long id, Map<String, Object> payload) {
@@ -320,13 +381,25 @@ public class PosApiService {
         String name = payload.containsKey("name") ? String.valueOf(payload.get("name")) : String.valueOf(current.get(0).get("nombre"));
         String slug = payload.containsKey("slug") ? String.valueOf(payload.get("slug")) : String.valueOf(current.get(0).get("slug"));
         jdbcTemplate.update("UPDATE categorias_producto SET nombre = ?, slug = ? WHERE id = ?", name, slug, id);
+        if (!Objects.equals(String.valueOf(current.get(0).get("nombre")), name) || !Objects.equals(String.valueOf(current.get(0).get("slug")), slug)) {
+            ApiSupport.recordAudit(jdbcTemplate, "EDICION", "Edicion de categoria " + name + ".");
+        }
         return Map.of("id", id, "name", name, "slug", slug);
     }
     public void deleteCategory(Long id) {
+        List<Map<String, Object>> current = jdbcTemplate.queryForList(
+                "SELECT nombre, slug FROM categorias_producto WHERE id = ?",
+                id
+        );
+        if (current.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Categoria no encontrada");
+        }
+
         int affected = jdbcTemplate.update("DELETE FROM categorias_producto WHERE id = ?", id);
         if (affected == 0) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Categoria no encontrada");
         }
+        ApiSupport.recordAudit(jdbcTemplate, "EDICION", "Eliminacion de categoria " + current.get(0).get("nombre") + ".");
     }
     public List<Map<String, Object>> getProducts() {
         return fetchProducts(false);
@@ -361,6 +434,7 @@ public class PosApiService {
                     stmt.setString(7, unidad);
                 }
         );
+        ApiSupport.recordAudit(jdbcTemplate, "EDICION", "Creacion de producto " + nombre + " con precio " + precio + " y stock " + stock + ".");
         return Map.of("id", id, "nombre", nombre, "stock", stock);
     }
 
@@ -381,13 +455,48 @@ public class PosApiService {
             "UPDATE productos SET codigo_barras=?, nombre=?, categoria_id=?, precio=?, stock=?, stock_minimo=?, unidad=? WHERE id=?",
             codigoBarras, nombre, categoriaId, precio, stock, stockMinimo, unidad, id
         );
+
+        StringBuilder changes = new StringBuilder();
+        if (!Objects.equals(String.valueOf(curr.get("nombre")), nombre)) {
+            changes.append("nombre, ");
+        }
+        if (!Objects.equals(Objects.toString(curr.get("codigo_barras"), ""), codigoBarras)) {
+            changes.append("codigo de barras, ");
+        }
+        if (!Objects.equals(curr.get("categoria_id"), categoriaId)) {
+            changes.append("categoria, ");
+        }
+        if (!Objects.equals(curr.get("stock"), stock)) {
+            changes.append("stock, ");
+        }
+        if (!Objects.equals(curr.get("stock_minimo"), stockMinimo)) {
+            changes.append("stock minimo, ");
+        }
+        if (!Objects.equals(String.valueOf(curr.get("unidad")), unidad)) {
+            changes.append("unidad, ");
+        }
+
+        if (!changes.isEmpty()) {
+            String detail = "Edicion de producto " + nombre + ". Cambios: " + changes.substring(0, changes.length() - 2) + ".";
+            ApiSupport.recordAudit(jdbcTemplate, "EDICION", detail);
+        }
+
         return Map.of("id", id, "nombre", nombre);
     }
 
     public void deleteProduct(Long id) {
+        List<Map<String, Object>> current = jdbcTemplate.queryForList(
+                "SELECT nombre, codigo_barras FROM productos WHERE id = ?",
+                id
+        );
+        if (current.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Producto no encontrado");
+        }
+
         try {
             int affected = jdbcTemplate.update("DELETE FROM productos WHERE id = ?", id);
             if (affected == 0) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Producto no encontrado");
+            ApiSupport.recordAudit(jdbcTemplate, "EDICION", "Eliminacion de producto " + current.get(0).get("nombre") + ".");
         } catch (org.springframework.dao.DataIntegrityViolationException e) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "No se puede eliminar el producto porque tiene historial (ventas, compras, etc.). Considera desactivarlo en su lugar.");
         }
@@ -566,6 +675,12 @@ public class PosApiService {
             // El trigger TRG_VentaDetalle_AfterInsert ahora se encarga de actualizar el stock automáticamente
         }
 
+        ApiSupport.recordAudit(
+                jdbcTemplate,
+                "EDICION",
+                "Registro de venta " + ticketId + " para " + client + " por " + total + "."
+        );
+
         return Map.of(
                 "id", saleId,
                 "ticketId", ticketId,
@@ -719,6 +834,11 @@ public class PosApiService {
                     statement.setTimestamp(5, Timestamp.valueOf(now));
                 }
         );
+        ApiSupport.recordAudit(
+                jdbcTemplate,
+                "EDICION",
+                "Generacion de reporte de ventas " + nombre + " para el rango " + desde + " a " + hasta + "."
+        );
         return Map.of(
                 "id", id,
                 "nombre", nombre,
@@ -734,7 +854,6 @@ public class PosApiService {
                 SELECT id, fecha_hora, usuario_nombre, evento, detalle
                 FROM auditoria_registros
                 ORDER BY fecha_hora DESC
-                LIMIT 200
                 """,
                 (rs, rowNum) -> Map.of(
                         "id", rs.getLong("id"),
@@ -844,6 +963,14 @@ public class PosApiService {
 
     // --- DEVOLUCIONES / CANCELACIONES ---
     public Map<String, Object> cancelSale(Long id, Map<String, Object> payload) {
+        List<Map<String, Object>> current = jdbcTemplate.queryForList(
+                "SELECT ticket_id, cliente_nombre FROM ventas WHERE id = ?",
+                id
+        );
+        if (current.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Venta no encontrada");
+        }
+
         String reason = String.valueOf(payload.getOrDefault("reason", "")).trim();
         String status = String.valueOf(payload.getOrDefault("status", "Cancelado")).trim();
         if (reason.isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Motivo requerido");
@@ -856,6 +983,12 @@ public class PosApiService {
         if (affected == 0) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Venta no encontrada");
         }
+
+        ApiSupport.recordAudit(
+                jdbcTemplate,
+                "CANCELACION",
+                "Cancelacion de venta " + current.get(0).get("ticket_id") + " por el motivo: " + reason + "."
+        );
 
         return Map.of("message", "Venta actualizada", "id", id, "status", status);
     }

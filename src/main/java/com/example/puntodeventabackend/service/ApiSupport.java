@@ -1,7 +1,10 @@
 package com.example.puntodeventabackend.service;
 
 import com.example.puntodeventabackend.repository.JdbcSupportRepository;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
@@ -122,5 +125,37 @@ final class ApiSupport {
         if (value instanceof Boolean bool) return bool;
         if (value instanceof Number number) return number.intValue() != 0;
         return Boolean.parseBoolean(String.valueOf(value));
+    }
+
+    static void recordAudit(JdbcTemplate jdbcTemplate, String evento, String detalle) {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        String username = authentication == null ? "" : String.valueOf(authentication.getName()).trim();
+        Long userId = null;
+        String userName = "Sistema";
+
+        if (!username.isBlank()) {
+            List<Map<String, Object>> users = jdbcTemplate.queryForList(
+                    "SELECT id, nombre_completo FROM usuarios WHERE username = ? LIMIT 1",
+                    username
+            );
+            if (!users.isEmpty()) {
+                Map<String, Object> user = users.get(0);
+                userId = ((Number) user.get("id")).longValue();
+                userName = String.valueOf(user.get("nombre_completo"));
+            }
+        }
+
+        recordAudit(jdbcTemplate, userId, userName, evento, detalle);
+    }
+
+    static void recordAudit(JdbcTemplate jdbcTemplate, Long userId, String userName, String evento, String detalle) {
+        jdbcTemplate.update(
+                "INSERT INTO auditoria_registros(fecha_hora, usuario_id, usuario_nombre, evento, detalle) VALUES(?,?,?,?,?)",
+                Timestamp.valueOf(LocalDateTime.now(ZoneOffset.UTC)),
+                userId,
+                userName == null || userName.isBlank() ? "Sistema" : userName.trim(),
+                evento,
+                detalle
+        );
     }
 }

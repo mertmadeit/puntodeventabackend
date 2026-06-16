@@ -63,6 +63,11 @@ public class InventoryLossService {
                     "INSERT INTO mermas (producto_id, cantidad, motivo, fecha_hora, usuario_id) VALUES (?, ?, ?, ?, ?)",
                     productId, quantity, motivo.isBlank() ? "Caducidad" : motivo, Timestamp.valueOf(now), userId
             );
+            ApiSupport.recordAudit(
+                    jdbcTemplate,
+                    "MERMA",
+                    "Merma de " + quantity + " unidades del producto " + getProductName(productId) + " por " + (motivo.isBlank() ? "Caducidad" : motivo) + "."
+            );
             inserted++;
         }
 
@@ -82,5 +87,13 @@ public class InventoryLossService {
         if (count == null || count == 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Producto no encontrado");
         }
+    }
+
+    private String getProductName(Long productId) {
+        List<String> names = jdbcTemplate.queryForList("SELECT nombre FROM productos WHERE id = ?", String.class, productId);
+        if (names.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Producto no encontrado");
+        }
+        return names.get(0);
     }
 }

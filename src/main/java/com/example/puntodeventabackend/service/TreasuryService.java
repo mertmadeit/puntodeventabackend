@@ -97,6 +97,11 @@ public class TreasuryService {
                     statement.setBigDecimal(7, monto);
                 }
         );
+        ApiSupport.recordAudit(
+                jdbcTemplate,
+                "EDICION",
+                "Movimiento de caja " + tipo + " por " + monto + " con concepto " + concepto + "."
+        );
         return Map.of(
                 "id", id,
                 "timestamp", now.toInstant(ZoneOffset.UTC).toString(),
@@ -169,6 +174,12 @@ public class TreasuryService {
                     statement.setBigDecimal(4, contado);
                     statement.setBigDecimal(5, diferencia);
                 }
+        );
+
+        ApiSupport.recordAudit(
+                jdbcTemplate,
+                "EDICION",
+                "Corte de caja generado para el turno " + turnoId + " con contado " + contado + " y diferencia " + diferencia + "."
         );
 
         return Map.of(

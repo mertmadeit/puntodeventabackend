@@ -60,6 +60,7 @@ public class PurchasesService {
                     statement.setString(4, rfc);
                 }
         );
+        ApiSupport.recordAudit(jdbcTemplate, "EDICION", "Creacion de proveedor " + nombre + ".");
         return Map.of("id", id, "nombre", nombre, "contacto", contacto, "telefono", telefono, "rfc", rfc, "activo", true);
     }
 
@@ -83,15 +84,25 @@ public class PurchasesService {
                 "UPDATE proveedores SET nombre=?, contacto=?, telefono=?, rfc=?, activo=? WHERE id=?",
                 nombre, contacto, telefono, rfc, activo, id
         );
+        ApiSupport.recordAudit(jdbcTemplate, "EDICION", "Edicion de proveedor " + nombre + ".");
         return Map.of("id", id, "nombre", nombre, "contacto", contacto, "telefono", telefono, "rfc", rfc, "activo", activo);
     }
 
     public void deleteProveedor(Long id) {
+        List<Map<String, Object>> current = jdbcTemplate.queryForList(
+                "SELECT nombre FROM proveedores WHERE id = ?",
+                id
+        );
+        if (current.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Proveedor no encontrado");
+        }
+
         try {
             int affected = jdbcTemplate.update("DELETE FROM proveedores WHERE id = ?", id);
             if (affected == 0) {
                 throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Proveedor no encontrado");
             }
+            ApiSupport.recordAudit(jdbcTemplate, "EDICION", "Eliminacion de proveedor " + current.get(0).get("nombre") + ".");
         } catch (DataIntegrityViolationException ex) {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT,
@@ -164,6 +175,12 @@ public class PurchasesService {
                 }
         );
 
+        ApiSupport.recordAudit(
+                jdbcTemplate,
+                "EDICION",
+                "Compra registrada al proveedor " + getProveedorName(proveedorId) + " por un total de " + finalTotal + "."
+        );
+
         // El detalle queda en la misma transaccion que el encabezado para evitar compras incompletas.
         for (Map<String, Object> item : resolvedItems) {
             jdbcTemplate.update(
@@ -197,6 +214,14 @@ public class PurchasesService {
         List<String> names = jdbcTemplate.queryForList("SELECT nombre FROM productos WHERE id = ?", String.class, productId);
         if (names.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Producto no encontrado");
+        }
+        return names.get(0);
+    }
+
+    private String getProveedorName(Long proveedorId) {
+        List<String> names = jdbcTemplate.queryForList("SELECT nombre FROM proveedores WHERE id = ?", String.class, proveedorId);
+        if (names.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Proveedor no encontrado");
         }
         return names.get(0);
     }
