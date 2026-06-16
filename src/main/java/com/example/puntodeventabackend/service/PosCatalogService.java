@@ -52,16 +52,23 @@ public class PosCatalogService {
 
     // Alta de usuario con password inicial y auditoria.
     public Map<String, Object> createUser(Map<String, Object> payload) {
-        String name = String.valueOf(payload.getOrDefault("name", "")).trim();
-        String email = String.valueOf(payload.getOrDefault("email", "")).trim();
+        String name = payloadString(payload, "name");
+        String email = payloadString(payload, "email");
         String username = usernameFromEmail(email);
         if (name.isBlank() || username.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "name y email requeridos");
         }
+        String password = payloadString(payload, "password");
+        if (password.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "password requerido");
+        }
+        if (password.length() < 6) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "password debe tener al menos 6 caracteres");
+        }
 
-        String role = normalizeUserRole(String.valueOf(payload.getOrDefault("role", "vendedor")));
-        String status = normalizeUserStatus(String.valueOf(payload.getOrDefault("status", "activo")));
-        String imageUrl = String.valueOf(payload.getOrDefault("imageUrl", "")).trim();
+        String role = normalizeUserRole(payloadStringOrDefault(payload, "role", "vendedor"));
+        String status = normalizeUserStatus(payloadStringOrDefault(payload, "status", "activo"));
+        String imageUrl = payloadString(payload, "imageUrl");
 
         Long id = ApiSupport.insertAndReturnId(
                 jdbcSupportRepository,
@@ -71,7 +78,7 @@ public class PosCatalogService {
                 """,
                 statement -> {
                     statement.setString(1, username);
-                    statement.setString(2, passwordEncoder.encode("admin"));
+                    statement.setString(2, passwordEncoder.encode(password));
                     statement.setString(3, role);
                     statement.setString(4, name);
                     statement.setString(5, status);
@@ -99,25 +106,42 @@ public class PosCatalogService {
         }
 
         Map<String, Object> curr = current.get(0);
-        String name = String.valueOf(payload.getOrDefault("name", "")).trim();
-        String email = String.valueOf(payload.getOrDefault("email", "")).trim();
+        String name = payloadString(payload, "name");
+        String email = payloadString(payload, "email");
         String username = usernameFromEmail(email);
         if (name.isBlank() || username.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "name y email requeridos");
         }
 
-        String role = normalizeUserRole(String.valueOf(payload.getOrDefault("role", "vendedor")));
-        String status = normalizeUserStatus(String.valueOf(payload.getOrDefault("status", "activo")));
-        String imageUrl = String.valueOf(payload.getOrDefault("imageUrl", "")).trim();
+        String role = normalizeUserRole(payloadStringOrDefault(payload, "role", "vendedor"));
+        String status = normalizeUserStatus(payloadStringOrDefault(payload, "status", "activo"));
+        String imageUrl = payloadString(payload, "imageUrl");
+        String password = payloadString(payload, "password");
+        boolean updatePassword = !password.isBlank();
+        if (updatePassword && password.length() < 6) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "password debe tener al menos 6 caracteres");
+        }
 
-        int affected = jdbcTemplate.update(
-                """
-                UPDATE usuarios
-                SET username = ?, role = ?, nombre_completo = ?, estado = ?, image_url = ?
-                WHERE id = ?
-                """,
-                username, role, name, status, imageUrl, id
-        );
+        int affected;
+        if (updatePassword) {
+            affected = jdbcTemplate.update(
+                    """
+                    UPDATE usuarios
+                    SET username = ?, password = ?, role = ?, nombre_completo = ?, estado = ?, image_url = ?
+                    WHERE id = ?
+                    """,
+                    username, passwordEncoder.encode(password), role, name, status, imageUrl, id
+            );
+        } else {
+            affected = jdbcTemplate.update(
+                    """
+                    UPDATE usuarios
+                    SET username = ?, role = ?, nombre_completo = ?, estado = ?, image_url = ?
+                    WHERE id = ?
+                    """,
+                    username, role, name, status, imageUrl, id
+            );
+        }
         if (affected == 0) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado");
         }
@@ -137,6 +161,9 @@ public class PosCatalogService {
         }
         if (!Objects.equals(Objects.toString(curr.get("image_url"), ""), imageUrl)) {
             changes.append("imagen, ");
+        }
+        if (updatePassword) {
+            changes.append("contrasena, ");
         }
 
         if (!changes.isEmpty()) {
@@ -389,6 +416,16 @@ public class PosCatalogService {
                         "imageUrl", Objects.toString(rs.getString("imagen_url"), "")
                 )
         );
+    }
+
+    // Lee strings del payload sin convertir null en texto literal.
+    private static String payloadString(Map<String, Object> payload, String key) {
+        return Objects.toString(payload.get(key), "").trim();
+    }
+
+    private static String payloadStringOrDefault(Map<String, Object> payload, String key, String fallback) {
+        String value = payloadString(payload, key);
+        return value.isBlank() ? fallback : value;
     }
 
     // Normaliza el nombre que el frontend usa para correo en pantalla.
