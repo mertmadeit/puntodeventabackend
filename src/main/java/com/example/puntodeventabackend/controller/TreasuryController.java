@@ -2,6 +2,7 @@ package com.example.puntodeventabackend.controller;
 
 import com.example.puntodeventabackend.service.TreasuryService;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -48,5 +49,11 @@ public class TreasuryController {
     @GetMapping("/turnos")
     public List<Map<String, Object>> getTesoreriaTurnos() {
         return treasuryService.getTurnos();
+    }
+
+    @PostMapping("/turnos")
+    @ResponseStatus(HttpStatus.CREATED)
+    public Map<String, Object> createTesoreriaTurno(@RequestBody Map<String, Object> payload, Authentication authentication) {
+        return treasuryService.createTurno(payload, authentication);
     }
 }

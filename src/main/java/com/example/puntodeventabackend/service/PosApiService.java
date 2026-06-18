@@ -288,7 +288,7 @@ public class PosApiService {
         );
     }
     @Transactional
-    public Map<String, Object> createSale(Map<String, Object> payload) {
+    public Map<String, Object> createSale(Map<String, Object> payload, Authentication authentication) {
         // La venta y sus detalles se guardan en la misma transaccion.
         List<Map<String, Object>> itemsPayload = castListOfMap(payload.get("items"));
         if (itemsPayload.isEmpty()) {
@@ -299,7 +299,7 @@ public class PosApiService {
         String client = String.valueOf(payload.getOrDefault("client", "Publico general"));
         BigDecimal cashGiven = toBigDecimal(payload.get("cashGiven"));
 
-        Long userId = jdbcTemplate.queryForObject("SELECT id FROM usuarios ORDER BY id LIMIT 1", Long.class);
+        Long userId = resolveSaleUserId(authentication);
         if (userId == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No hay usuarios en la base");
         }
@@ -405,6 +405,46 @@ public class PosApiService {
                 Map.entry("items", resolvedItems.stream().map(i -> Map.of("name", i.get("name"), "quantity", i.get("quantity"))).toList())
         );
     }
+
+    private Long resolveSaleUserId(Authentication authentication) {
+        Long authenticatedUserId = getAuthenticatedUserId(authentication);
+        if (authenticatedUserId != null && hasOpenTurno(authenticatedUserId)) {
+            return authenticatedUserId;
+        }
+
+        List<Long> openTurnoUsers = jdbcTemplate.queryForList(
+                "SELECT usuario_id FROM caja_turnos WHERE estado='abierto' ORDER BY hora_apertura DESC LIMIT 1",
+                Long.class
+        );
+        if (!openTurnoUsers.isEmpty()) {
+            return openTurnoUsers.get(0);
+        }
+
+        if (authenticatedUserId != null) {
+            return authenticatedUserId;
+        }
+        return jdbcTemplate.queryForObject("SELECT id FROM usuarios ORDER BY id LIMIT 1", Long.class);
+    }
+
+    private boolean hasOpenTurno(Long userId) {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM caja_turnos WHERE usuario_id = ? AND estado='abierto'",
+                Integer.class,
+                userId
+        );
+        return count != null && count > 0;
+    }
+
+    private Long getAuthenticatedUserId(Authentication authentication) {
+        if (authentication == null || authentication.getName() == null) return null;
+        List<Long> ids = jdbcTemplate.queryForList(
+                "SELECT id FROM usuarios WHERE username = ? LIMIT 1",
+                Long.class,
+                authentication.getName()
+        );
+        return ids.isEmpty() ? null : ids.get(0);
+    }
+
     // Dashboard
     public Map<String, Object> getDashboardResumen() {
         // Calcula el dia de negocio y lo compara contra el dia previo con ventas reales.

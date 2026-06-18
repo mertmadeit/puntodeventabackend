@@ -2,6 +2,7 @@ package com.example.puntodeventabackend.controller;
 
 import com.example.puntodeventabackend.service.PosApiService;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -29,8 +30,8 @@ public class SalesController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public Map<String, Object> createSale(@RequestBody Map<String, Object> payload) {
-        return posApiService.createSale(payload);
+    public Map<String, Object> createSale(@RequestBody Map<String, Object> payload, Authentication authentication) {
+        return posApiService.createSale(payload, authentication);
     }
 
     @PostMapping("/{id}/cancel")

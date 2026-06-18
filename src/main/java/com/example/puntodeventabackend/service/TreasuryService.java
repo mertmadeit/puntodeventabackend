@@ -3,6 +3,7 @@ package com.example.puntodeventabackend.service;
 import com.example.puntodeventabackend.repository.JdbcSupportRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
@@ -186,6 +187,12 @@ public class TreasuryService {
                 }
         );
 
+        jdbcTemplate.update(
+                "UPDATE caja_turnos SET hora_cierre = ?, estado = 'cerrado' WHERE id = ?",
+                Timestamp.valueOf(now),
+                turnoId
+        );
+
         ApiSupport.recordAudit(
                 jdbcTemplate,
                 "EDICION",
@@ -202,6 +209,78 @@ public class TreasuryService {
                 "esperado", esperado,
                 "contado", contado,
                 "diferencia", diferencia
+        );
+    }
+
+    // Abre un turno real para enlazar las ventas de caja con el corte posterior.
+    @Transactional
+    public Map<String, Object> createTurno(Map<String, Object> payload, Authentication authentication) {
+        Long userId = getAuthenticatedUserId(authentication);
+        if (userId == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "No autenticado");
+        }
+
+        List<Map<String, Object>> existing = jdbcTemplate.queryForList(
+                """
+                SELECT t.id, t.hora_apertura, t.monto_inicial, u.nombre_completo
+                FROM caja_turnos t
+                JOIN usuarios u ON u.id = t.usuario_id
+                WHERE t.usuario_id = ? AND t.estado = 'abierto'
+                ORDER BY t.hora_apertura DESC
+                LIMIT 1
+                """,
+                userId
+        );
+        if (!existing.isEmpty()) {
+            Map<String, Object> turno = existing.get(0);
+            return Map.of(
+                    "id", String.valueOf(turno.get("id")),
+                    "cajero", turno.get("nombre_completo"),
+                    "horaApertura", ApiSupport.toUtcIsoString(turno.get("hora_apertura")),
+                    "montoInicial", turno.get("monto_inicial"),
+                    "ventasEfectivo", BigDecimal.ZERO,
+                    "movimientosNeto", BigDecimal.ZERO
+            );
+        }
+
+        BigDecimal montoInicial = ApiSupport.requireNonNegativeAmount(
+                payload.getOrDefault("montoInicial", 0),
+                "monto inicial invalido"
+        );
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        String turnoCodigo = "turno-" + userId + "-" + System.currentTimeMillis();
+
+        Long id = ApiSupport.insertAndReturnId(
+                jdbcSupportRepository,
+                "INSERT INTO caja_turnos(turno_codigo, usuario_id, hora_apertura, monto_inicial, estado) VALUES(?,?,?,?, 'abierto')",
+                statement -> {
+                    statement.setString(1, turnoCodigo);
+                    statement.setLong(2, userId);
+                    statement.setTimestamp(3, Timestamp.valueOf(now));
+                    statement.setBigDecimal(4, montoInicial);
+                }
+        );
+
+        Map<String, Object> user = jdbcTemplate.queryForMap(
+                "SELECT nombre_completo FROM usuarios WHERE id = ?",
+                userId
+        );
+
+        ApiSupport.recordAudit(
+                jdbcTemplate,
+                userId,
+                String.valueOf(user.get("nombre_completo")),
+                "EDICION",
+                "Apertura de caja con monto inicial " + montoInicial + "."
+        );
+
+        return Map.of(
+                "id", String.valueOf(id),
+                "cajero", user.get("nombre_completo"),
+                "horaApertura", now.toInstant(ZoneOffset.UTC).toString(),
+                "montoInicial", montoInicial,
+                "ventasEfectivo", BigDecimal.ZERO,
+                "movimientosNeto", BigDecimal.ZERO
         );
     }
 
@@ -247,6 +326,16 @@ public class TreasuryService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No hay turno abierto");
         }
         return ids.get(0);
+    }
+
+    private Long getAuthenticatedUserId(Authentication authentication) {
+        if (authentication == null || authentication.getName() == null) return null;
+        List<Long> ids = jdbcTemplate.queryForList(
+                "SELECT id FROM usuarios WHERE username = ? LIMIT 1",
+                Long.class,
+                authentication.getName()
+        );
+        return ids.isEmpty() ? null : ids.get(0);
     }
 
     // Normaliza el tipo de movimiento a los valores aceptados por la base.
