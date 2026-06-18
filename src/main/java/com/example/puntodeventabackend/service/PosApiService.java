@@ -391,16 +391,18 @@ public class PosApiService {
                 "Registro de venta " + ticketId + " para " + client + " por " + total + "."
         );
 
-        return Map.of(
-                "id", saleId,
-                "ticketId", ticketId,
-                "dateTime", now.toInstant(ZoneOffset.UTC).toString(),
-                "cashier", "Caja",
-                "client", client,
-                "total", total,
-                "paymentMethod", mapMetodoPagoOut(paymentMethod),
-                "status", "completada",
-                "items", resolvedItems.stream().map(i -> Map.of("name", i.get("name"), "quantity", i.get("quantity"))).toList()
+        return Map.ofEntries(
+                Map.entry("id", saleId),
+                Map.entry("ticketId", ticketId),
+                Map.entry("dateTime", now.toInstant(ZoneOffset.UTC).toString()),
+                Map.entry("cashier", "Caja"),
+                Map.entry("client", client),
+                Map.entry("subtotal", finalSubtotal),
+                Map.entry("iva", iva),
+                Map.entry("total", total),
+                Map.entry("paymentMethod", mapMetodoPagoOut(paymentMethod)),
+                Map.entry("status", "completada"),
+                Map.entry("items", resolvedItems.stream().map(i -> Map.of("name", i.get("name"), "quantity", i.get("quantity"))).toList())
         );
     }
     // Dashboard
