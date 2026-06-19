@@ -296,6 +296,8 @@ public class PosCatalogService {
 
         String codigoBarras = String.valueOf(payload.getOrDefault("codigo_barras", ""));
         Long categoriaId = payload.containsKey("categoria_id") ? ((Number) payload.get("categoria_id")).longValue() : null;
+        Long proveedorId = ApiSupport.requireLong(payload.get("proveedor_id"), "proveedor requerido", "proveedor invalido");
+        ensureProveedorExists(proveedorId);
         BigDecimal precio = new BigDecimal(String.valueOf(payload.getOrDefault("precio", "0")));
         Integer stock = payload.containsKey("stock") ? ((Number) payload.get("stock")).intValue() : 0;
         Integer stockMinimo = payload.containsKey("stock_minimo") ? ((Number) payload.get("stock_minimo")).intValue() : 0;
@@ -303,16 +305,17 @@ public class PosCatalogService {
 
         Long id = ApiSupport.insertAndReturnId(
                 jdbcSupportRepository,
-                "INSERT INTO productos(codigo_barras, nombre, categoria_id, precio, stock, stock_minimo, unidad) VALUES(?,?,?,?,?,?,?)",
+                "INSERT INTO productos(codigo_barras, nombre, categoria_id, proveedor_id, precio, stock, stock_minimo, unidad) VALUES(?,?,?,?,?,?,?,?)",
                 stmt -> {
                     stmt.setString(1, codigoBarras);
                     stmt.setString(2, nombre);
                     if (categoriaId != null) stmt.setLong(3, categoriaId);
                     else stmt.setNull(3, Types.BIGINT);
-                    stmt.setBigDecimal(4, precio);
-                    stmt.setInt(5, stock);
-                    stmt.setInt(6, stockMinimo);
-                    stmt.setString(7, unidad);
+                    stmt.setLong(4, proveedorId);
+                    stmt.setBigDecimal(5, precio);
+                    stmt.setInt(6, stock);
+                    stmt.setInt(7, stockMinimo);
+                    stmt.setString(8, unidad);
                 }
         );
         ApiSupport.recordAudit(jdbcTemplate, "EDICION", "Creacion de producto " + nombre + " con precio " + precio + " y stock " + stock + ".");
@@ -328,14 +331,21 @@ public class PosCatalogService {
         String nombre = payload.containsKey("nombre") ? String.valueOf(payload.get("nombre")) : String.valueOf(curr.get("nombre"));
         String codigoBarras = payload.containsKey("codigo_barras") ? String.valueOf(payload.get("codigo_barras")) : (curr.get("codigo_barras") != null ? String.valueOf(curr.get("codigo_barras")) : "");
         Long categoriaId = payload.containsKey("categoria_id") ? ((Number) payload.get("categoria_id")).longValue() : (curr.get("categoria_id") != null ? ((Number) curr.get("categoria_id")).longValue() : null);
+        Long proveedorId = payload.containsKey("proveedor_id")
+                ? ApiSupport.requireLong(payload.get("proveedor_id"), "proveedor requerido", "proveedor invalido")
+                : (curr.get("proveedor_id") != null ? ((Number) curr.get("proveedor_id")).longValue() : null);
+        if (proveedorId == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "proveedor requerido");
+        }
+        ensureProveedorExists(proveedorId);
         BigDecimal precio = payload.containsKey("precio") ? new BigDecimal(String.valueOf(payload.get("precio"))) : (BigDecimal) curr.get("precio");
         Integer stock = payload.containsKey("stock") ? ((Number) payload.get("stock")).intValue() : (Integer) curr.get("stock");
         Integer stockMinimo = payload.containsKey("stock_minimo") ? ((Number) payload.get("stock_minimo")).intValue() : (Integer) curr.get("stock_minimo");
         String unidad = payload.containsKey("unidad") ? String.valueOf(payload.get("unidad")) : String.valueOf(curr.get("unidad"));
 
         jdbcTemplate.update(
-                "UPDATE productos SET codigo_barras=?, nombre=?, categoria_id=?, precio=?, stock=?, stock_minimo=?, unidad=? WHERE id=?",
-                codigoBarras, nombre, categoriaId, precio, stock, stockMinimo, unidad, id
+                "UPDATE productos SET codigo_barras=?, nombre=?, categoria_id=?, proveedor_id=?, precio=?, stock=?, stock_minimo=?, unidad=? WHERE id=?",
+                codigoBarras, nombre, categoriaId, proveedorId, precio, stock, stockMinimo, unidad, id
         );
 
         StringBuilder changes = new StringBuilder();
@@ -347,6 +357,9 @@ public class PosCatalogService {
         }
         if (!Objects.equals(curr.get("categoria_id"), categoriaId)) {
             changes.append("categoria, ");
+        }
+        if (!Objects.equals(curr.get("proveedor_id"), proveedorId)) {
+            changes.append("proveedor, ");
         }
         if (!Objects.equals(curr.get("stock"), stock)) {
             changes.append("stock, ");
@@ -408,25 +421,40 @@ public class PosCatalogService {
     // Query base de productos; `onlyAlerts` filtra los que ya cruzaron el minimo.
     private List<Map<String, Object>> fetchProducts(boolean onlyAlerts) {
         String sql = """
-                SELECT p.id, p.nombre, c.nombre categoria, p.codigo_barras, p.stock, p.stock_minimo, p.precio, p.unidad, p.imagen_url
+                SELECT p.id, p.nombre, c.nombre categoria, p.codigo_barras, p.stock, p.stock_minimo,
+                       p.precio, p.unidad, p.imagen_url, p.proveedor_id, pr.nombre proveedor
                 FROM productos p
                 JOIN categorias_producto c ON c.id = p.categoria_id
+                LEFT JOIN proveedores pr ON pr.id = p.proveedor_id
                 WHERE p.activo = 1
                 """ + (onlyAlerts ? " AND p.stock <= p.stock_minimo " : "") + " ORDER BY p.id";
         return jdbcTemplate.query(
                 sql,
-                (rs, rowNum) -> Map.of(
-                        "id", rs.getLong("id"),
-                        "name", rs.getString("nombre"),
-                        "category", rs.getString("categoria"),
-                        "barcode", Objects.toString(rs.getString("codigo_barras"), ""),
-                        "stock", rs.getInt("stock"),
-                        "minStock", rs.getInt("stock_minimo"),
-                        "price", rs.getBigDecimal("precio"),
-                        "unit", rs.getString("unidad"),
-                        "imageUrl", Objects.toString(rs.getString("imagen_url"), "")
+                (rs, rowNum) -> Map.ofEntries(
+                        Map.entry("id", rs.getLong("id")),
+                        Map.entry("name", rs.getString("nombre")),
+                        Map.entry("category", rs.getString("categoria")),
+                        Map.entry("barcode", Objects.toString(rs.getString("codigo_barras"), "")),
+                        Map.entry("stock", rs.getInt("stock")),
+                        Map.entry("minStock", rs.getInt("stock_minimo")),
+                        Map.entry("price", rs.getBigDecimal("precio")),
+                        Map.entry("unit", rs.getString("unidad")),
+                        Map.entry("imageUrl", Objects.toString(rs.getString("imagen_url"), "")),
+                        Map.entry("providerId", rs.getLong("proveedor_id")),
+                        Map.entry("providerName", Objects.toString(rs.getString("proveedor"), ""))
                 )
         );
+    }
+
+    private void ensureProveedorExists(Long proveedorId) {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM proveedores WHERE id = ? AND activo = 1",
+                Integer.class,
+                proveedorId
+        );
+        if (count == null || count == 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Proveedor no encontrado o inactivo");
+        }
     }
 
     // Lee strings del payload sin convertir null en texto literal.

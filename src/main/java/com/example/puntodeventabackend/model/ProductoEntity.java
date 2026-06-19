@@ -19,6 +19,9 @@ public class ProductoEntity {
     @JoinColumn(name = "categoria_id", nullable = false)
     private CategoriaProductoEntity categoria;
 
+    @Column(name = "proveedor_id", columnDefinition = "BIGINT DEFAULT 1")
+    private Long proveedorId;
+
     @Column(name = "codigo_barras")
     private String codigoBarras;
 
@@ -47,6 +50,10 @@ public class ProductoEntity {
 
     public CategoriaProductoEntity getCategoria() {
         return categoria;
+    }
+
+    public Long getProveedorId() {
+        return proveedorId;
     }
 
     public String getCodigoBarras() {

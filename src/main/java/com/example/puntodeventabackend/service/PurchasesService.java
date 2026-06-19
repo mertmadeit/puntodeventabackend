@@ -14,6 +14,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 @Service
@@ -55,8 +56,8 @@ public class PurchasesService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "nombre requerido");
         }
         String contacto = ApiSupport.optionalString(payload.get("contacto"));
-        String telefono = ApiSupport.optionalString(payload.get("telefono"));
-        String rfc = ApiSupport.optionalString(payload.get("rfc"));
+        String telefono = validateTelefono(ApiSupport.optionalString(payload.get("telefono")));
+        String rfc = validateRfc(ApiSupport.optionalString(payload.get("rfc")));
 
         Long id = ApiSupport.insertAndReturnId(
                 jdbcSupportRepository,
@@ -85,8 +86,12 @@ public class PurchasesService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "nombre requerido");
         }
         String contacto = payload.containsKey("contacto") ? ApiSupport.optionalString(payload.get("contacto")) : ApiSupport.optionalString(curr.get("contacto"));
-        String telefono = payload.containsKey("telefono") ? ApiSupport.optionalString(payload.get("telefono")) : ApiSupport.optionalString(curr.get("telefono"));
-        String rfc = payload.containsKey("rfc") ? ApiSupport.optionalString(payload.get("rfc")) : ApiSupport.optionalString(curr.get("rfc"));
+        String telefono = payload.containsKey("telefono")
+                ? validateTelefono(ApiSupport.optionalString(payload.get("telefono")))
+                : ApiSupport.optionalString(curr.get("telefono"));
+        String rfc = payload.containsKey("rfc")
+                ? validateRfc(ApiSupport.optionalString(payload.get("rfc")))
+                : ApiSupport.optionalString(curr.get("rfc"));
         Boolean activo = payload.containsKey("activo") ? ApiSupport.toBoolean(payload.get("activo")) : ApiSupport.toBoolean(curr.get("activo"));
 
         jdbcTemplate.update(
@@ -116,7 +121,7 @@ public class PurchasesService {
         } catch (DataIntegrityViolationException ex) {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT,
-                    "No se puede eliminar el proveedor porque tiene historial (compras). Considera desactivarlo en su lugar."
+                    "No se puede eliminar el proveedor porque tiene productos o compras asociados. Considera desactivarlo en su lugar."
             );
         }
     }
@@ -161,7 +166,7 @@ public class PurchasesService {
             Long productId = ApiSupport.requireLong(item.get("productId"), "productId requerido", "productId invalido");
             Integer quantity = ApiSupport.requirePositiveInteger(item.get("quantity"), "Cantidad invalida");
             BigDecimal unitCost = ApiSupport.requirePositiveAmount(item.get("costo"), "Costo invalido");
-            String productName = getProductName(productId);
+            String productName = getProductNameForProvider(productId, proveedorId);
 
             BigDecimal subtotal = unitCost.multiply(BigDecimal.valueOf(quantity));
             total = total.add(subtotal);
@@ -209,9 +214,13 @@ public class PurchasesService {
 
     // Verifica que el proveedor exista antes de grabar la compra.
     private void ensureProveedorExists(Long proveedorId) {
-        Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM proveedores WHERE id = ?", Integer.class, proveedorId);
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM proveedores WHERE id = ? AND activo = 1",
+                Integer.class,
+                proveedorId
+        );
         if (count == null || count == 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Proveedor no encontrado");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Proveedor no encontrado o inactivo");
         }
     }
 
@@ -225,10 +234,15 @@ public class PurchasesService {
     }
 
     // Resuelve el nombre del producto para que el detalle quede legible.
-    private String getProductName(Long productId) {
-        List<String> names = jdbcTemplate.queryForList("SELECT nombre FROM productos WHERE id = ?", String.class, productId);
+    private String getProductNameForProvider(Long productId, Long proveedorId) {
+        List<String> names = jdbcTemplate.queryForList(
+                "SELECT nombre FROM productos WHERE id = ? AND proveedor_id = ? AND activo = 1",
+                String.class,
+                productId,
+                proveedorId
+        );
         if (names.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Producto no encontrado");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "El producto no pertenece al proveedor seleccionado");
         }
         return names.get(0);
     }
@@ -240,5 +254,21 @@ public class PurchasesService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Proveedor no encontrado");
         }
         return names.get(0);
+    }
+
+    // Acepta campos opcionales, pero exige el formato mexicano cuando se capturan.
+    private String validateTelefono(String telefono) {
+        if (!telefono.isBlank() && !telefono.matches("\\d{10}")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "El telefono debe tener exactamente 10 digitos");
+        }
+        return telefono;
+    }
+
+    private String validateRfc(String rfc) {
+        String normalized = rfc.toUpperCase(Locale.ROOT);
+        if (!normalized.isBlank() && !normalized.matches("[A-ZÑ&]{3,4}\\d{6}[A-Z0-9]{3}")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "El RFC debe tener un formato valido de 12 o 13 caracteres");
+        }
+        return normalized;
     }
 }
