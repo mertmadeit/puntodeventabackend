@@ -540,7 +540,7 @@ public class PosApiService {
                 "SELECT COALESCE(DATE(MAX(fecha_hora)), UTC_DATE()) FROM ventas",
                 String.class
         );
-        return jdbcTemplate.query(
+        List<Map<String, Object>> series = jdbcTemplate.query(
                 "CALL SP_ReporteVentasDiarias(DATE_SUB(?, INTERVAL 90 DAY), ?)",
                 (rs, rowNum) -> Map.of(
                         "date", rs.getDate("fecha").toString(),
@@ -550,6 +550,9 @@ public class PosApiService {
                 endDay,
                 endDay
         );
+        // El procedimiento reporta de reciente a antiguo; la grafica necesita orden cronologico.
+        Collections.reverse(series);
+        return series;
     }
     // Reportes y auditoria
     public List<Map<String, Object>> getReportesVentas() {
