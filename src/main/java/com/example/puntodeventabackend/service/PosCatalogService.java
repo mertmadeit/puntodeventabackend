@@ -9,7 +9,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.sql.Types;
+import java.time.LocalDate;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -279,9 +282,73 @@ public class PosCatalogService {
         return fetchProducts(false);
     }
 
-    // Devuelve alertas de stock bajo usando la misma consulta de inventario.
+    // Devuelve alertas enriquecidas con proveedor y proyeccion de agotamiento.
     public List<Map<String, Object>> getProductAlerts() {
-        return fetchProducts(true);
+        String sql = """
+                SELECT p.id, p.nombre, c.nombre categoria, p.codigo_barras, p.stock, p.stock_minimo,
+                       p.precio, p.unidad, p.imagen_url, p.proveedor_id, pr.nombre proveedor,
+                       referencia.fecha_referencia,
+                       COALESCE(SUM(CASE WHEN v.id IS NOT NULL THEN vd.cantidad ELSE 0 END), 0) unidades_vendidas_30d
+                FROM productos p
+                JOIN categorias_producto c ON c.id = p.categoria_id
+                LEFT JOIN proveedores pr ON pr.id = p.proveedor_id
+                CROSS JOIN (
+                    SELECT COALESCE(DATE(MAX(fecha_hora)), UTC_DATE()) fecha_referencia
+                    FROM ventas
+                ) referencia
+                LEFT JOIN venta_detalles vd ON vd.producto_id = p.id
+                LEFT JOIN ventas v ON v.id = vd.venta_id
+                    AND v.estado = 'Pagado'
+                    AND DATE(v.fecha_hora) BETWEEN DATE_SUB(referencia.fecha_referencia, INTERVAL 29 DAY)
+                                               AND referencia.fecha_referencia
+                WHERE p.activo = 1
+                  AND p.stock <= p.stock_minimo
+                GROUP BY p.id, p.nombre, c.nombre, p.codigo_barras, p.stock, p.stock_minimo,
+                         p.precio, p.unidad, p.imagen_url, p.proveedor_id, pr.nombre,
+                         referencia.fecha_referencia
+                ORDER BY (p.stock <= 0) DESC, (p.stock_minimo - p.stock) DESC, p.nombre
+                """;
+
+        return jdbcTemplate.query(sql, (rs, rowNum) -> {
+            int stock = rs.getInt("stock");
+            int unitsSold30Days = rs.getInt("unidades_vendidas_30d");
+            LocalDate projectionBaseDate = rs.getDate("fecha_referencia").toLocalDate();
+            BigDecimal averageDailySales = BigDecimal.valueOf(unitsSold30Days)
+                    .divide(BigDecimal.valueOf(30), 2, RoundingMode.HALF_UP);
+
+            Integer estimatedDaysRemaining = null;
+            if (stock <= 0) {
+                estimatedDaysRemaining = 0;
+            } else if (unitsSold30Days > 0) {
+                estimatedDaysRemaining = (int) Math.ceil((stock * 30.0) / unitsSold30Days);
+            }
+
+            Map<String, Object> product = new LinkedHashMap<>();
+            product.put("id", rs.getLong("id"));
+            product.put("name", rs.getString("nombre"));
+            product.put("category", rs.getString("categoria"));
+            product.put("barcode", Objects.toString(rs.getString("codigo_barras"), ""));
+            product.put("stock", stock);
+            product.put("minStock", rs.getInt("stock_minimo"));
+            product.put("price", rs.getBigDecimal("precio"));
+            product.put("unit", rs.getString("unidad"));
+            product.put("imageUrl", Objects.toString(rs.getString("imagen_url"), ""));
+            product.put("providerId", rs.getLong("proveedor_id"));
+            product.put("providerName", Objects.toString(rs.getString("proveedor"), "Sin proveedor"));
+            product.put("unitsSold30Days", unitsSold30Days);
+            product.put("averageDailySales", averageDailySales);
+            product.put("projectionBaseDate", projectionBaseDate.toString());
+
+            if (estimatedDaysRemaining != null) {
+                product.put("estimatedDaysRemaining", estimatedDaysRemaining);
+                product.put(
+                        "estimatedStockoutDate",
+                        projectionBaseDate.plusDays(estimatedDaysRemaining).toString()
+                );
+            }
+
+            return product;
+        });
     }
 
     // Inventario completo para la tabla principal.
